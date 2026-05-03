@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nlp-rag-bench"
+version = "0.1.0"
+description = "Benchmarking RAG retrieval methods on QA tasks"
+requires-python = ">=3.11"
+
+dependencies = [
+    # Vector store
+    "chromadb>=0.5",
+
+    # Embeddings & re-ranking
+    "sentence-transformers>=3.0",
+
+    # BM25
+    "rank-bm25>=0.2",
+
+    # LLM (local inference via Ollama)
+    "ollama>=0.3",
+
+    # Evaluation
+    "ragas>=0.2,<0.3",
+
+    # UI
+    "streamlit>=1.35",
+
+    # Utilities
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0",
+    "loguru>=0.7",
+    "tenacity>=8.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "pyright>=1.1",
+    "ipykernel>=6.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
