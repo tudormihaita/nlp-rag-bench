@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "nlp-rag-bench"
 version = "0.1.0"
-description = "Benchmarking RAG retrieval methods on QA tasks"
+description = "Benchmarking RAG retrieval methods on open-domain multi-hop QA task"
 requires-python = ">=3.11"
 
 dependencies = [
