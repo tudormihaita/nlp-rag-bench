@@ -9,17 +9,27 @@ from ragbench.generation.llm import Generator
 from ragbench.generation.prompts import DECOMPOSITION_PROMPT, INTERMEDIATE_PROMPT, REWRITE_PROMPT
 from ragbench.indexing.embedder import Embedder
 
-from .base import RetrievedPassage, RetrievalTrace
+from .base import RetrievalTrace, RetrievedPassage
 from .naive import NaiveRetriever
 
 _RRF_C = 60  # standard RRF constant
 
 # Markers indicating the LLM failed to produce a useful intermediate answer
 _REFUSAL_MARKERS = (
-    "i don't know", "unknown", "cannot determine", "not provided",
-    "not specified", "no information", "unclear", "n/a", "none",
-    "the context does not", "the passage does not", "i'm not sure",
-    "not mentioned", "not stated",
+    "i don't know",
+    "unknown",
+    "cannot determine",
+    "not provided",
+    "not specified",
+    "no information",
+    "unclear",
+    "n/a",
+    "none",
+    "the context does not",
+    "the passage does not",
+    "i'm not sure",
+    "not mentioned",
+    "not stated",
 )
 
 
@@ -77,7 +87,9 @@ class DecompositionRetriever:
                 if 3 <= len(sq.split()) <= 25:
                     sub_questions.append(sq)
         if not (2 <= len(sub_questions) <= 5):
-            logger.warning(f"Decomposition produced {len(sub_questions)} sub-questions (expected 2-5); falling back")
+            logger.warning(
+                f"Decomposition produced {len(sub_questions)} sub-questions (expected 2-5); falling back"
+            )
             return []
         return sub_questions
 
@@ -88,9 +100,7 @@ class DecompositionRetriever:
         Falls back to simple string enrichment if the rewrite looks malformed.
         """
         facts = "; ".join(intermediate_answers)
-        raw = self.generator.generate(
-            REWRITE_PROMPT.format(question=sq, facts=facts)
-        )
+        raw = self.generator.generate(REWRITE_PROMPT.format(question=sq, facts=facts))
         rewritten = raw.strip().splitlines()[0].strip()
         if 2 <= len(rewritten.split()) <= 30:
             return rewritten
@@ -115,10 +125,7 @@ class DecompositionRetriever:
         self, sub_questions: list[str], k: int
     ) -> tuple[list[RetrievedPassage], RetrievalTrace]:
         """RRF over all sub-questions without intermediate generation."""
-        per_query = [
-            self.naive.retrieve(sq, k=self.k_per_subquery)[0]
-            for sq in sub_questions
-        ]
+        per_query = [self.naive.retrieve(sq, k=self.k_per_subquery)[0] for sq in sub_questions]
         return self._rrf_merge(per_query, k), RetrievalTrace(sub_queries=sub_questions)
 
     def _retrieve_iterative(
@@ -145,12 +152,9 @@ class DecompositionRetriever:
 
             # Generate intermediate answer from top-k_for_intermediate passages only
             context = "\n\n".join(
-                f"[{i + 1}] {p.text}"
-                for i, p in enumerate(sq_passages[: self.k_for_intermediate])
+                f"[{i + 1}] {p.text}" for i, p in enumerate(sq_passages[: self.k_for_intermediate])
             )
-            ans = self.generator.generate(
-                INTERMEDIATE_PROMPT.format(context=context, question=sq)
-            )
+            ans = self.generator.generate(INTERMEDIATE_PROMPT.format(context=context, question=sq))
             if _is_useful_answer(ans):
                 intermediate_answers.append(ans.strip())
 
@@ -165,9 +169,13 @@ class DecompositionRetriever:
         sub_questions = self._decompose(query)
 
         if not sub_questions:
-            logger.warning("Decomposition produced no sub-questions; falling back to original query")
+            logger.warning(
+                "Decomposition produced no sub-questions; falling back to original query"
+            )
             passages, _ = self.naive.retrieve(query, k=k)
-            return passages, RetrievalTrace(notes="decomposition failed; falling back to original query")
+            return passages, RetrievalTrace(
+                notes="decomposition failed; falling back to original query"
+            )
 
         if self.iterative:
             return self._retrieve_iterative(sub_questions, k)

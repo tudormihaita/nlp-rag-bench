@@ -26,7 +26,6 @@ from ragbench.evaluation.evaluator import _method_slug, evaluate_method
 from ragbench.factory import build_pipelines
 from ragbench.generation.llm import Generator
 from ragbench.indexing.embedder import Embedder
-from ragbench.pipeline import RAGPipeline
 
 console = Console()
 

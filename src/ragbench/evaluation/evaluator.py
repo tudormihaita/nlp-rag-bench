@@ -67,7 +67,9 @@ def evaluate_method(
             for row in csv.DictReader(f):
                 rows.append(row)
                 done_ids.add(row["question_id"])
-        logger.info(f"[{method_name}] Resuming from checkpoint; {len(done_ids)}/{len(questions)} already scored")
+        logger.info(
+            f"[{method_name}] Resuming from checkpoint; {len(done_ids)}/{len(questions)} already scored"
+        )
 
     remaining = [q for q in questions if q["id"] not in done_ids]
     if not remaining:

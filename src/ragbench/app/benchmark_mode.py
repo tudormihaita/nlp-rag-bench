@@ -72,7 +72,7 @@ def render_benchmark_mode(
     # Gold reveals
     rev_col1, rev_col2 = st.columns(2)
     with rev_col1:
-        with st.expander(f"Reveal gold answer"):
+        with st.expander("Reveal gold answer"):
             st.markdown(f"**{q['answer']}**")
             if q.get("answer_aliases"):
                 st.caption("Also accepted: " + ", ".join(q["answer_aliases"]))
@@ -107,16 +107,20 @@ def render_benchmark_mode(
         for method in active_methods:
             result = results[method]
             m = _compute_metrics(result, references, gold_ids)
-            table_rows.append({
-                "Method": method,
-                "Answer": result.answer[:80] + ("…" if len(result.answer) > 80 else ""),
-                "EM": f"{m['EM']:.2f}",
-                "F1": f"{m['F1']:.2f}",
-                "Hit@k": f"{m['Hit@k']:.2f}" if m["Hit@k"] is not None else "—",
-                "Recall@k": f"{m['Recall@k']:.2f}" if m["Recall@k"] is not None else "—",
-                "All-Rec@k": f"{m['All-Recall@k']:.2f}" if m["All-Recall@k"] is not None else "—",
-                "MRR": f"{m['MRR']:.2f}" if m["MRR"] is not None else "—",
-            })
+            table_rows.append(
+                {
+                    "Method": method,
+                    "Answer": result.answer[:80] + ("…" if len(result.answer) > 80 else ""),
+                    "EM": f"{m['EM']:.2f}",
+                    "F1": f"{m['F1']:.2f}",
+                    "Hit@k": f"{m['Hit@k']:.2f}" if m["Hit@k"] is not None else "—",
+                    "Recall@k": f"{m['Recall@k']:.2f}" if m["Recall@k"] is not None else "—",
+                    "All-Rec@k": f"{m['All-Recall@k']:.2f}"
+                    if m["All-Recall@k"] is not None
+                    else "—",
+                    "MRR": f"{m['MRR']:.2f}" if m["MRR"] is not None else "—",
+                }
+            )
         st.table(table_rows)
 
         # Per-method retrieved passages with ✓/✗ annotations

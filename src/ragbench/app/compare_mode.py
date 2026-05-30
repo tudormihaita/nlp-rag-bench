@@ -3,7 +3,9 @@ import streamlit as st
 from ragbench.pipeline import PipelineResult, RAGPipeline
 
 
-def _render_results(results: dict[str, PipelineResult], pipelines: dict[str, RAGPipeline | None]) -> None:
+def _render_results(
+    results: dict[str, PipelineResult], pipelines: dict[str, RAGPipeline | None]
+) -> None:
     active = [m for m in pipelines if pipelines[m] is not None]
     cols = st.columns(len(active))
     for col, method in zip(cols, active):

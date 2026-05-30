@@ -1,11 +1,12 @@
 import math
-import chromadb
 from dataclasses import replace
+
+import chromadb
 from sentence_transformers import CrossEncoder
 
 from ragbench.indexing.embedder import Embedder
 
-from .base import RetrievedPassage, RetrievalTrace
+from .base import RetrievalTrace, RetrievedPassage
 from .naive import NaiveRetriever
 
 
@@ -13,6 +14,7 @@ def _safe_device(requested: str) -> str:
     if requested == "mps":
         try:
             import torch
+
             if not torch.backends.mps.is_available():
                 return "cpu"
         except Exception:

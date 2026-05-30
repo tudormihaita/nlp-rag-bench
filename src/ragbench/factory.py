@@ -1,11 +1,11 @@
 from ragbench.config import Settings
 from ragbench.generation.llm import Generator
-from ragbench.indexing.embedder import Embedder
 from ragbench.indexing.builder import load_collection
+from ragbench.indexing.embedder import Embedder
 from ragbench.pipeline import RAGPipeline
+from ragbench.retrievers.decomposition import DecompositionRetriever
 from ragbench.retrievers.naive import NaiveRetriever
 from ragbench.retrievers.reranking import ReRankRetriever
-from ragbench.retrievers.decomposition import DecompositionRetriever
 
 
 def build_pipelines(

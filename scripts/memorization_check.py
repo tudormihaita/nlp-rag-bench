@@ -15,8 +15,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import json
-
 from loguru import logger
 from rich.console import Console
 from tqdm import tqdm

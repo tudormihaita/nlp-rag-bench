@@ -1,9 +1,9 @@
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator
 
 from ragbench.generation.llm import Generator
 from ragbench.generation.prompts import NO_RAG_PROMPT, RAG_PROMPT
-from ragbench.retrievers.base import RetrievedPassage, RetrievalTrace, Retriever
+from ragbench.retrievers.base import RetrievalTrace, RetrievedPassage, Retriever
 
 
 @dataclass

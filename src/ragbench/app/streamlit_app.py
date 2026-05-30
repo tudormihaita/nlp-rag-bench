@@ -34,7 +34,8 @@ def load_pipelines():
         "Re-ranking": RAGPipeline(
             generator=llm,
             retriever=ReRankRetriever(
-                collection, embedder,
+                collection,
+                embedder,
                 reranker_model=settings.reranker_model,
                 device=settings.reranker_device,
                 candidate_k=settings.rerank_candidate_k,
@@ -74,17 +75,22 @@ def load_benchmark_data():
 from ragbench.app.benchmark_mode import render_benchmark_mode
 from ragbench.app.chat_mode import render_chat_mode
 from ragbench.app.compare_mode import render_compare_mode
+from ragbench.config import settings
+from ragbench.generation.llm import Generator
 
 # Fail fast with a readable message instead of a raw connection traceback
 try:
-    import ollama as _ollama
-    _ollama.list()
+    _llm = Generator(settings.generator_model)
+    if not _llm._backend.health_check():
+        raise ConnectionError("health check failed")
 except Exception:
     st.error(
         "**Ollama is not running.** Start it with `ollama serve` then refresh this page.",
         icon="🔴",
     )
     st.stop()
+
+del _llm  # don't keep the temporary instance around
 
 pipelines = load_pipelines()
 

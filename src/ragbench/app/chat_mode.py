@@ -15,7 +15,10 @@ def render_chat_mode(pipelines: dict[str, RAGPipeline | None]) -> None:
         )
         top_k = st.slider("Top-k passages", min_value=1, max_value=10, value=5)
         st.divider()
-        st.caption("Generator: " + (pipelines.get("Classic RAG") or next(iter(pipelines.values()))).generator.model)
+        st.caption(
+            "Generator: "
+            + (pipelines.get("Classic RAG") or next(iter(pipelines.values()))).generator.model
+        )
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -56,10 +59,12 @@ def render_chat_mode(pipelines: dict[str, RAGPipeline | None]) -> None:
 
             answer = st.write_stream(answer_stream)
 
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": answer,
-            "passages": [
-                {"title": p.title, "text": p.text, "score": p.score} for p in passages
-            ],
-        })
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": answer,
+                "passages": [
+                    {"title": p.title, "text": p.text, "score": p.score} for p in passages
+                ],
+            }
+        )
