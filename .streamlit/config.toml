@@ -1,0 +1,4 @@
+[server]
+# Disable hot-reload watcher; prevents spurious torchvision import errors
+# caused by Streamlit scanning deep into the transformers library.
+fileWatcherType = "none"
