@@ -18,7 +18,9 @@ class _OpenAIBackend:
     def __init__(
         self, base_url: str, model: str, temperature: float, auth_bearer: str | None
     ) -> None:
-        self.base_url = base_url
+        self.base_url = base_url.rstrip("/")
+        if self.base_url.endswith("/v1"):
+            self.base_url = self.base_url[:-3]
         self.model = model
         self.temperature = temperature
         self.headers = {"Content-Type": "application/json"}
@@ -27,7 +29,6 @@ class _OpenAIBackend:
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}/v1{path}"
-
     def health_check(self) -> bool:
         """Return True if the /v1/models endpoint is reachable."""
         try:
@@ -112,15 +113,14 @@ class _OllamaBackend:
 
 
 class Generator:
-    """Unified generator that transparently talks to Ollama *or* OpenAI-compatible endpoints.
+    """Unified generator that talks to Ollama *or* an OpenAI-compatible endpoint.
 
-    The backend is chosen automatically:
-      - If ``API_URL`` contains ``/v1/`` (or is not localhost:11434) the
-        OpenAI-compatible backend is used.
-      - Otherwise the native Ollama SDK backend is used.
+    Backend selection is controlled by ``api_src`` / the ``API_SRC`` env var:
+      - ``ollama``: uses the native Ollama Python SDK against ``host`` / ``API_URL``
+      - ``openai``: uses an OpenAI-compatible HTTP API at ``host`` / ``API_URL``
 
-    Auth header (``Authorization: Bearer <token>``) is injected when
-    ``API_AUTH_BEARER`` is set, regardless of backend.
+    If ``API_AUTH_BEARER`` is set, an ``Authorization: Bearer <token>`` header is
+    injected for both backends.
     """
 
     def __init__(
