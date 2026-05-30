@@ -18,13 +18,13 @@ class Settings(BaseSettings):
     chroma_db_dir: Path = Path("chroma_db")
 
     # Models
-    embedding_model: str = "BAAI/bge-small-en-v1.5"
-    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    generator_model: str = "qwen2.5:3b-instruct"
+    embedding_model: str = "BAAI/bge-large-en-v1.5"
+    reranker_model: str = "BAAI/bge-reranker-base"
+    generator_model: str = "qwen2.5:7b-instruct"
 
     # Retrieval
-    top_k: int = 5
-    rerank_candidate_k: int = 30
+    top_k: int = 8
+    rerank_candidate_k: int = 40
 
     # Stratified sampling
     sampling_seed: int = 42

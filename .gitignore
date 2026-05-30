@@ -221,5 +221,6 @@ __marimo__/
 /data/
 !/data/.gitkeep
 
-# Vector store (generated, large)
-/db/
+# Vector store
+/chroma_db/
+!/chroma_db/.gitkeep

@@ -1,4 +1,5 @@
 import csv
+import json
 from pathlib import Path
 from typing import Any
 
@@ -7,7 +8,16 @@ from tqdm import tqdm
 
 from ragbench.pipeline import RAGPipeline
 
-from .metrics import all_recall_at_k, exact_match, hit_at_k, mrr, recall_at_k, token_f1
+from .metrics import (
+    all_recall_at_k,
+    exact_match,
+    hit_at_k,
+    mrr,
+    ndcg_at_k,
+    precision_at_k,
+    recall_at_k,
+    token_f1,
+)
 
 _FIELDNAMES = [
     "question_id",
@@ -23,6 +33,10 @@ _FIELDNAMES = [
     "recall_at_k",
     "all_recall_at_k",
     "mrr",
+    "precision_at_k",
+    "ndcg_at_k",
+    # JSON-encoded list of retrieved passage texts; enables RAGAS scoring as a post-processing pass
+    "contexts",
 ]
 
 
@@ -67,11 +81,16 @@ def evaluate_method(
             writer.writeheader()
 
         for q in tqdm(remaining, desc=method_name, unit="q"):
-            result = pipeline.run(q["question"])
+            try:
+                result = pipeline.run(q["question"])
+            except Exception as exc:
+                logger.warning(f"[{method_name}] Error on {q['id']}: {exc!r} — skipping")
+                continue
             retrieved_ids = [p.doc_id for p in result.passages]
             gold_ids = gold_index.get(q["id"], [])
             references = [q["answer"]] + q.get("answer_aliases", [])
 
+            contexts = [p.text for p in result.passages]
             row: dict[str, Any] = {
                 "question_id": q["id"],
                 "method": method_name,
@@ -87,6 +106,9 @@ def evaluate_method(
                 "recall_at_k": recall_at_k(retrieved_ids, gold_ids),
                 "all_recall_at_k": all_recall_at_k(retrieved_ids, gold_ids),
                 "mrr": mrr(retrieved_ids, gold_ids),
+                "precision_at_k": precision_at_k(retrieved_ids, gold_ids),
+                "ndcg_at_k": ndcg_at_k(retrieved_ids, gold_ids),
+                "contexts": json.dumps(contexts),
             }
             writer.writerow(row)
             f.flush()

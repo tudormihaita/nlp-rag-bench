@@ -7,6 +7,7 @@ and are scored against all references (answer + answer_aliases), keeping the bes
 Retrieval metrics compare retrieved doc_ids (ordered) against the gold doc_ids from gold_index.
 """
 
+import math
 import re
 import string
 from collections import Counter
@@ -57,7 +58,7 @@ def recall_at_k(retrieved_ids: list[str], gold_ids: list[str]) -> float:
 
 
 def all_recall_at_k(retrieved_ids: list[str], gold_ids: list[str]) -> float:
-    """Were ALL gold passages retrieved? (strict multi-hop metric)"""
+    """Were ALL gold passages retrieved? (strict multi-hop metric)."""
     if not gold_ids:
         return 1.0
     return float(set(gold_ids).issubset(set(retrieved_ids)))
@@ -70,3 +71,25 @@ def mrr(retrieved_ids: list[str], gold_ids: list[str]) -> float:
         if doc_id in gold_set:
             return 1.0 / rank
     return 0.0
+
+
+def precision_at_k(retrieved_ids: list[str], gold_ids: list[str]) -> float:
+    """Fraction of retrieved passages that are gold (noise ratio complement)."""
+    if not retrieved_ids:
+        return 0.0
+    gold_set = set(gold_ids)
+    return sum(1 for doc_id in retrieved_ids if doc_id in gold_set) / len(retrieved_ids)
+
+
+def ndcg_at_k(retrieved_ids: list[str], gold_ids: list[str]) -> float:
+    """Normalized Discounted Cumulative Gain: rewards gold passages ranked higher."""
+    gold_set = set(gold_ids)
+    dcg = sum(
+        1.0 / math.log2(rank + 2)
+        for rank, doc_id in enumerate(retrieved_ids)
+        if doc_id in gold_set
+    )
+    # Ideal DCG: all gold passages placed at the top positions
+    n_ideal = min(len(gold_ids), len(retrieved_ids))
+    idcg = sum(1.0 / math.log2(rank + 2) for rank in range(n_ideal))
+    return dcg / idcg if idcg > 0 else 0.0

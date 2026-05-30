@@ -23,42 +23,12 @@ from rich.table import Table
 
 from ragbench.config import settings
 from ragbench.evaluation.evaluator import _method_slug, evaluate_method
+from ragbench.factory import build_pipelines
 from ragbench.generation.llm import Generator
-from ragbench.indexing.builder import load_collection
 from ragbench.indexing.embedder import Embedder
 from ragbench.pipeline import RAGPipeline
-from ragbench.retrievers.decomposition import DecompositionRetriever
-from ragbench.retrievers.naive import NaiveRetriever
-from ragbench.retrievers.reranking import ReRankRetriever
 
 console = Console()
-
-
-def build_pipelines(embedder: Embedder, gen: Generator) -> dict[str, RAGPipeline]:
-    collection = load_collection(settings.embedding_model, str(settings.chroma_db_dir))
-    return {
-        "No-RAG": RAGPipeline(generator=gen, retriever=None, top_k=settings.top_k),
-        "Classic RAG": RAGPipeline(
-            generator=gen,
-            retriever=NaiveRetriever(collection, embedder),
-            top_k=settings.top_k,
-        ),
-        "Re-ranking": RAGPipeline(
-            generator=gen,
-            retriever=ReRankRetriever(
-                collection, embedder,
-                reranker_model=settings.reranker_model,
-                device=settings.reranker_device,
-                candidate_k=settings.rerank_candidate_k,
-            ),
-            top_k=settings.top_k,
-        ),
-        "Decomposition": RAGPipeline(
-            generator=gen,
-            retriever=DecompositionRetriever(collection, embedder, gen),
-            top_k=settings.top_k,
-        ),
-    }
 
 
 def aggregate(all_rows: list[dict]) -> dict[tuple[str, int], dict[str, float]]:
@@ -69,7 +39,7 @@ def aggregate(all_rows: list[dict]) -> dict[tuple[str, int], dict[str, float]]:
         groups[(row["method"], int(row["hop_count"]))].append(row)
 
     result = {}
-    float_cols = ["em", "f1", "hit_at_k", "recall_at_k", "all_recall_at_k", "mrr"]
+    float_cols = ["em", "f1", "hit_at_k", "recall_at_k", "all_recall_at_k", "mrr", "precision_at_k", "ndcg_at_k"]
     for key, rows in groups.items():
         result[key] = {col: sum(float(r[col]) for r in rows) / len(rows) for col in float_cols}
     return result
@@ -96,21 +66,20 @@ def print_table(agg: dict[tuple[str, int], dict[str, float]], methods: list[str]
     console.print(gen_table)
 
     # Retrieval table (No-RAG always shows — since no passages retrieved)
+    ret_cols = ["hit_at_k", "recall_at_k", "all_recall_at_k", "mrr", "precision_at_k", "ndcg_at_k"]
+    ret_headers = ["Hit", "Rec", "AllRec", "MRR", "Prec", "NDCG"]
     ret_table = Table(title="Retrieval Metrics", show_header=True, header_style="bold magenta")
     ret_table.add_column("Method", style="bold")
     for hop in hops:
-        ret_table.add_column(f"Hit ({hop}h)", justify="right")
-        ret_table.add_column(f"Rec ({hop}h)", justify="right")
-        ret_table.add_column(f"AllRec ({hop}h)", justify="right")
-        ret_table.add_column(f"MRR ({hop}h)", justify="right")
+        for header in ret_headers:
+            ret_table.add_column(f"{header} ({hop}h)", justify="right")
     for method in methods:
         if method == "No-RAG":
-            ret_table.add_row(method, *["—"] * (len(hops) * 4))
+            ret_table.add_row(method, *["—"] * (len(hops) * len(ret_cols)))
         else:
             ret_table.add_row(
                 method,
-                *[cell(method, hop, col) for hop in hops
-                  for col in ["hit_at_k", "recall_at_k", "all_recall_at_k", "mrr"]],
+                *[cell(method, hop, col) for hop in hops for col in ret_cols],
             )
     console.print(ret_table)
 
@@ -132,7 +101,7 @@ def main(args: argparse.Namespace) -> None:
     logger.info("Loading embedder and generator...")
     embedder = Embedder(settings.embedding_model, settings.embedding_device)
     gen = Generator(settings.generator_model)
-    pipelines = build_pipelines(embedder, gen)
+    pipelines = build_pipelines(embedder, gen, settings)
 
     methods = args.methods or list(pipelines.keys())
     settings.results_dir.mkdir(parents=True, exist_ok=True)

@@ -14,6 +14,8 @@ class RetrievedPassage:
 class RetrievalTrace:
     """Optional metadata for the UI to render (sub-questions, rerank scores, etc.)"""
     sub_queries: list[str] = field(default_factory=list)
+    intermediate_answers: list[str] = field(default_factory=list)
+    enriched_queries: list[str] = field(default_factory=list)
     rerank_scores: list[float] = field(default_factory=list)
     notes: str = ""
 

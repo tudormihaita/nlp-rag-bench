@@ -1,10 +1,23 @@
+import math
 import chromadb
+from dataclasses import replace
 from sentence_transformers import CrossEncoder
 
 from ragbench.indexing.embedder import Embedder
 
 from .base import RetrievedPassage, RetrievalTrace
 from .naive import NaiveRetriever
+
+
+def _safe_device(requested: str) -> str:
+    if requested == "mps":
+        try:
+            import torch
+            if not torch.backends.mps.is_available():
+                return "cpu"
+        except Exception:
+            return "cpu"
+    return requested
 
 
 class ReRankRetriever:
@@ -18,27 +31,25 @@ class ReRankRetriever:
         self,
         collection: chromadb.Collection,
         embedder: Embedder,
-        reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        reranker_model: str = "BAAI/bge-reranker-base",
         device: str = "cpu",
-        candidate_k: int = 30,
+        candidate_k: int = 40,
     ) -> None:
         self.naive = NaiveRetriever(collection, embedder)
-        self.reranker = CrossEncoder(reranker_model, device=device)
+        self.reranker = CrossEncoder(reranker_model, device=_safe_device(device))
         self.candidate_k = candidate_k
 
     def retrieve(self, query: str, k: int = 5) -> tuple[list[RetrievedPassage], RetrievalTrace]:
-        candidates, _ = self.naive.retrieve(query, k=self.candidate_k)
+        # diversify=False: let the CrossEncoder decide relevance over the full candidate pool
+        candidates, _ = self.naive.retrieve(query, k=self.candidate_k, diversify=False)
 
         pairs = [[query, p.text] for p in candidates]
         scores: list[float] = self.reranker.predict(pairs).tolist()
 
         ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)[:k]
 
-        passages = []
-        rerank_scores = []
-        for score, passage in ranked:
-            passage.score = score  # replace cosine similarity with rerank logit
-            passages.append(passage)
-            rerank_scores.append(score)
+        # Sigmoid maps unbounded CrossEncoder logits to [0, 1] for interpretable scores
+        passages = [replace(p, score=1.0 / (1.0 + math.exp(-float(s)))) for s, p in ranked]
+        rerank_scores = [1.0 / (1.0 + math.exp(-float(s))) for s, _ in ranked]
 
         return passages, RetrievalTrace(rerank_scores=rerank_scores)
