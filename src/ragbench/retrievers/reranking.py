@@ -54,4 +54,7 @@ class ReRankRetriever:
         passages = [replace(p, score=1.0 / (1.0 + math.exp(-float(s)))) for s, p in ranked]
         rerank_scores = [1.0 / (1.0 + math.exp(-float(s))) for s, _ in ranked]
 
-        return passages, RetrievalTrace(rerank_scores=rerank_scores)
+        return passages, RetrievalTrace(
+            rerank_scores=rerank_scores,
+            notes=f"Scored {len(candidates)} candidates with cross-encoder; retained top {k}.",
+        )

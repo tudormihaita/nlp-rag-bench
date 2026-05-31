@@ -86,9 +86,9 @@ class DecompositionRetriever:
                 sq = m.group(1).strip()
                 if 3 <= len(sq.split()) <= 25:
                     sub_questions.append(sq)
-        if not (2 <= len(sub_questions) <= 5):
+        if not (1 <= len(sub_questions) <= 5):
             logger.warning(
-                f"Decomposition produced {len(sub_questions)} sub-questions (expected 2-5); falling back"
+                f"Decomposition produced {len(sub_questions)} sub-questions (expected 1-5); falling back"
             )
             return []
         return sub_questions

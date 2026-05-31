@@ -23,7 +23,7 @@ from rich.table import Table
 
 from ragbench.config import settings
 from ragbench.evaluation.evaluator import _method_slug, evaluate_method
-from ragbench.factory import build_pipelines
+from ragbench.factory import PipelineName, build_pipelines
 from ragbench.generation.llm import Generator
 from ragbench.indexing.embedder import Embedder
 
@@ -73,7 +73,7 @@ def print_table(agg: dict[tuple[str, int], dict[str, float]], methods: list[str]
         for header in ret_headers:
             ret_table.add_column(f"{header} ({hop}h)", justify="right")
     for method in methods:
-        if method == "No-RAG":
+        if method == PipelineName.NO_RAG:
             ret_table.add_row(method, *["—"] * (len(hops) * len(ret_cols)))
         else:
             ret_table.add_row(
@@ -99,7 +99,12 @@ def main(args: argparse.Namespace) -> None:
     # Build pipelines
     logger.info("Loading embedder and generator...")
     embedder = Embedder(settings.embedding_model, settings.embedding_device)
-    gen = Generator(settings.generator_model)
+    gen = Generator(
+        settings.generator_model,
+        host=settings.api_url,
+        auth_bearer=settings.api_auth_bearer,
+        api_src=settings.api_src,
+    )
     pipelines = build_pipelines(embedder, gen, settings)
 
     methods = args.methods or list(pipelines.keys())

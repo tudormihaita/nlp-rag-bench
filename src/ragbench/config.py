@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,14 +20,14 @@ class Settings(BaseSettings):
     # Models
     embedding_model: str = "BAAI/bge-large-en-v1.5"
     reranker_model: str = "BAAI/bge-reranker-base"
-    generator_model: str = os.environ.get("GENERATOR_MODEL", "qwen2.5:7b-instruct")
+    generator_model: str = "qwen2.5:7b-instruct"
 
     # Retrieval
     top_k: int = 8
     rerank_candidate_k: int = 40
 
     # Stratified sampling
-    sampling_seed: int = int(os.environ.get("SAMPLING_SEED", 42))
+    sampling_seed: int = 42
     sample_2hop: int = 200
     sample_3hop: int = 200
     sample_4hop: int = 100
@@ -37,6 +36,11 @@ class Settings(BaseSettings):
     embedding_batch_size: int = 128
     embedding_device: str = "mps"
     reranker_device: str = "mps"
+
+    # LLM backend (override with RAGBENCH_API_URL, RAGBENCH_API_SRC, RAGBENCH_API_AUTH_BEARER)
+    api_url: str = "http://localhost:11434"
+    api_src: str = "ollama"
+    api_auth_bearer: str | None = None
 
 
 settings = Settings()

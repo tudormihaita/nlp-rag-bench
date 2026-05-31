@@ -40,7 +40,12 @@ def main() -> None:
     rng = random.Random(_CHECK_SEED)
     sample = rng.sample(all_questions, _CHECK_N)
 
-    gen = Generator(settings.generator_model)
+    gen = Generator(
+        settings.generator_model,
+        host=settings.api_url,
+        auth_bearer=settings.api_auth_bearer,
+        api_src=settings.api_src,
+    )
     logger.info(f"Running no-RAG baseline with {settings.generator_model} on {_CHECK_N} questions…")
 
     f1_scores: list[float] = []

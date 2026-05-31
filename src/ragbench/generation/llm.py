@@ -1,20 +1,12 @@
-"""LLM generation backend supporting both Ollama and OpenAI-compatible APIs."""
-
 import json
-import os
 from collections.abc import Iterator
 
 import httpx
 import ollama
 
-API_URL = os.environ.get("API_URL", "http://localhost:11434")
-API_AUTH_BEARER = os.environ.get("API_AUTH_BEARER")
-API_SRC = os.environ.get("API_SRC", "ollama")
-
 
 class _OpenAIBackend:
-    """Minimal OpenAI-compatible chat backend using httpx."""
-
+    """OpenAI-compatible chat backend using httpx."""
     def __init__(
         self, base_url: str, model: str, temperature: float, auth_bearer: str | None
     ) -> None:
@@ -29,8 +21,9 @@ class _OpenAIBackend:
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}/v1{path}"
+
     def health_check(self) -> bool:
-        """Return True if the /v1/models endpoint is reachable."""
+        """Return True if the expected /v1/models endpoint is reachable."""
         try:
             with httpx.Client(timeout=10, follow_redirects=True) as client:
                 r = client.get(self._url("/models"), headers=self.headers)
@@ -127,9 +120,9 @@ class Generator:
         self,
         model: str = "qwen2.5:3b-instruct",
         temperature: float = 0.0,
-        host: str = API_URL,
-        auth_bearer: str | None = API_AUTH_BEARER,
-        api_src: str = API_SRC,
+        host: str = "http://localhost:11434",
+        auth_bearer: str | None = None,
+        api_src: str = "ollama",
     ) -> None:
         self.model = model
         self.temperature = temperature
@@ -146,9 +139,9 @@ class Generator:
             case _:
                 raise ValueError(f"Unrecognized API source: {api_src}")
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    def health_check(self) -> bool:
+        """Return True if the configured backend is reachable."""
+        return self._backend.health_check()
 
     def generate(self, prompt: str) -> str:
         """Blocking call; returns the full response string. Used by the evaluator."""

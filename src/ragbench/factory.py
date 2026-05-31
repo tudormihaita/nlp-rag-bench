@@ -1,3 +1,5 @@
+from enum import StrEnum
+
 from ragbench.config import Settings
 from ragbench.generation.llm import Generator
 from ragbench.indexing.builder import load_collection
@@ -6,6 +8,14 @@ from ragbench.pipeline import RAGPipeline
 from ragbench.retrievers.decomposition import DecompositionRetriever
 from ragbench.retrievers.naive import NaiveRetriever
 from ragbench.retrievers.reranking import ReRankRetriever
+
+
+class PipelineName(StrEnum):
+    NO_RAG = "No-RAG"
+    CLASSIC_RAG = "Classic RAG"
+    RERANKING = "Re-ranking"
+    DECOMPOSITION = "Decomposition"
+    ITERATIVE_DECOMPOSITION = "Iterative Decomposition"
 
 
 def build_pipelines(
@@ -18,13 +28,13 @@ def build_pipelines(
     collection = load_collection(settings.embedding_model, str(settings.chroma_db_dir))
 
     pipelines: dict[str, RAGPipeline] = {
-        "No-RAG": RAGPipeline(generator=gen, retriever=None, top_k=settings.top_k),
-        "Classic RAG": RAGPipeline(
+        PipelineName.NO_RAG: RAGPipeline(generator=gen, retriever=None, top_k=settings.top_k),
+        PipelineName.CLASSIC_RAG: RAGPipeline(
             generator=gen,
             retriever=NaiveRetriever(collection, embedder),
             top_k=settings.top_k,
         ),
-        "Re-ranking": RAGPipeline(
+        PipelineName.RERANKING: RAGPipeline(
             generator=gen,
             retriever=ReRankRetriever(
                 collection,
@@ -35,7 +45,7 @@ def build_pipelines(
             ),
             top_k=settings.top_k,
         ),
-        "Decomposition": RAGPipeline(
+        PipelineName.DECOMPOSITION: RAGPipeline(
             generator=gen,
             retriever=DecompositionRetriever(collection, embedder, gen),
             top_k=settings.top_k,
@@ -43,7 +53,7 @@ def build_pipelines(
     }
 
     if include_iterative:
-        pipelines["Iterative Decomposition"] = RAGPipeline(
+        pipelines[PipelineName.ITERATIVE_DECOMPOSITION] = RAGPipeline(
             generator=gen,
             retriever=DecompositionRetriever(collection, embedder, gen, iterative=True),
             top_k=settings.top_k,
