@@ -37,5 +37,10 @@ class Settings(BaseSettings):
     embedding_device: str = "mps"
     reranker_device: str = "mps"
 
+    # LLM backend (override with RAGBENCH_API_URL, RAGBENCH_API_SRC, RAGBENCH_API_AUTH_BEARER)
+    api_url: str = "http://localhost:11434"
+    api_src: str = "ollama"
+    api_auth_bearer: str | None = None
+
 
 settings = Settings()

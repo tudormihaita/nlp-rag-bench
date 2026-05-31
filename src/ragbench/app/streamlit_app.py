@@ -1,53 +1,39 @@
+from collections.abc import Mapping
+
 import streamlit as st
+
+from ragbench.factory import PipelineName
+from ragbench.pipeline import RAGPipeline
 
 st.set_page_config(page_title="RAGBench", page_icon="🔍", layout="wide")
 
 
 @st.cache_resource
-def load_pipelines():
+def load_pipelines() -> Mapping[str, RAGPipeline | None]:
     from ragbench.config import settings
+    from ragbench.factory import build_pipelines
     from ragbench.generation.llm import Generator
-    from ragbench.indexing.builder import index_exists, load_collection
+    from ragbench.indexing.builder import index_exists
     from ragbench.indexing.embedder import Embedder
-    from ragbench.pipeline import RAGPipeline
-    from ragbench.retrievers.decomposition import DecompositionRetriever
-    from ragbench.retrievers.naive import NaiveRetriever
-    from ragbench.retrievers.reranking import ReRankRetriever
 
-    llm = Generator(settings.generator_model)
-    pipelines: dict[str, RAGPipeline | None] = {
-        "No-RAG": RAGPipeline(generator=llm, retriever=None, top_k=settings.top_k),
-    }
+    gen = Generator(
+        settings.generator_model,
+        host=settings.api_url,
+        auth_bearer=settings.api_auth_bearer,
+        api_src=settings.api_src,
+    )
 
     if not index_exists(settings.embedding_model, str(settings.chroma_db_dir)):
-        pipelines |= {"Classic RAG": None, "Re-ranking": None, "Decomposition": None}
-        return pipelines
+        return {
+            PipelineName.NO_RAG: RAGPipeline(generator=gen, retriever=None, top_k=settings.top_k),
+            PipelineName.CLASSIC_RAG: None,
+            PipelineName.RERANKING: None,
+            PipelineName.DECOMPOSITION: None,
+            PipelineName.ITERATIVE_DECOMPOSITION: None,
+        }
 
     embedder = Embedder(settings.embedding_model, settings.embedding_device)
-    collection = load_collection(str(settings.embedding_model), str(settings.chroma_db_dir))
-    pipelines |= {
-        "Classic RAG": RAGPipeline(
-            generator=llm,
-            retriever=NaiveRetriever(collection, embedder),
-            top_k=settings.top_k,
-        ),
-        "Re-ranking": RAGPipeline(
-            generator=llm,
-            retriever=ReRankRetriever(
-                collection, embedder,
-                reranker_model=settings.reranker_model,
-                device=settings.reranker_device,
-                candidate_k=settings.rerank_candidate_k,
-            ),
-            top_k=settings.top_k,
-        ),
-        "Decomposition": RAGPipeline(
-            generator=llm,
-            retriever=DecompositionRetriever(collection, embedder, llm),
-            top_k=settings.top_k,
-        ),
-    }
-    return pipelines
+    return build_pipelines(embedder, gen, settings, include_iterative=True)
 
 
 @st.cache_data
@@ -74,21 +60,29 @@ def load_benchmark_data():
 from ragbench.app.benchmark_mode import render_benchmark_mode
 from ragbench.app.chat_mode import render_chat_mode
 from ragbench.app.compare_mode import render_compare_mode
+from ragbench.config import settings
+from ragbench.generation.llm import Generator
 
 # Fail fast with a readable message instead of a raw connection traceback
-try:
-    import ollama as _ollama
-    _ollama.list()
-except Exception:
-    st.error(
-        "**Ollama is not running.** Start it with `ollama serve` then refresh this page.",
-        icon="🔴",
-    )
+_llm = Generator(
+    settings.generator_model,
+    host=settings.api_url,
+    auth_bearer=settings.api_auth_bearer,
+    api_src=settings.api_src,
+)
+if not _llm.health_check():
+    if settings.api_src == "ollama":
+        msg = "**Ollama is not running.** Start it with `ollama serve` then refresh this page."
+    else:
+        msg = f"**LLM backend is not reachable** (`API {settings.api_url}`). Check that the server is running and authentication is set correctly if required."
+    st.error(msg, icon="🔴")
     st.stop()
+
+del _llm  # don't keep the temporary instance around
 
 pipelines = load_pipelines()
 
-if pipelines.get("Classic RAG") is None:
+if pipelines.get(PipelineName.CLASSIC_RAG) is None:
     st.info(
         "Vector index not found. Only **No-RAG** is available. "
         "Build document corpus first to enable the retrieval methods.",
@@ -97,16 +91,29 @@ if pipelines.get("Classic RAG") is None:
 
 questions, gold_index, doc_lookup = load_benchmark_data()
 
+# Global sidebar — visible on all tabs
+with st.sidebar:
+    st.header("Settings")
+    active_methods = [m for m, p in pipelines.items() if p is not None]
+    chat_method = st.selectbox("Retrieval method", active_methods, help="Used in the Chat tab")
+    top_k = st.slider("Top-k passages", min_value=1, max_value=20, value=settings.top_k)
+    st.divider()
+    _gen_pipeline = pipelines.get(PipelineName.CLASSIC_RAG) or next(
+        (p for p in pipelines.values() if p is not None), None
+    )
+    if _gen_pipeline:
+        st.caption(f"Generator: {_gen_pipeline.generator.model}")
+
 chat_tab, compare_tab, benchmark_tab = st.tabs(["Chat", "Compare", "Benchmark"])
 
 with chat_tab:
-    render_chat_mode(pipelines)
+    render_chat_mode(pipelines, chat_method, top_k)
 
 with compare_tab:
-    render_compare_mode(pipelines)
+    render_compare_mode(pipelines, top_k)
 
 with benchmark_tab:
     if questions is None:
         st.warning("Preprocess and sample data first to enable Benchmark mode.")
     else:
-        render_benchmark_mode(pipelines, questions, gold_index, doc_lookup)
+        render_benchmark_mode(pipelines, questions, gold_index, doc_lookup, top_k)

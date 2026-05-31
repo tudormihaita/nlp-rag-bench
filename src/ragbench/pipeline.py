@@ -1,9 +1,9 @@
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator
 
 from ragbench.generation.llm import Generator
 from ragbench.generation.prompts import NO_RAG_PROMPT, RAG_PROMPT
-from ragbench.retrievers.base import RetrievedPassage, RetrievalTrace, Retriever
+from ragbench.retrievers.base import RetrievalTrace, RetrievedPassage, Retriever
 
 
 @dataclass
@@ -25,27 +25,30 @@ class RAGPipeline:
         self.top_k = top_k
 
     def _retrieve_and_prompt(
-        self, question: str
+        self, question: str, top_k: int | None = None
     ) -> tuple[str, list[RetrievedPassage], RetrievalTrace]:
+        k = top_k if top_k is not None else self.top_k
         if self.retriever is None:
             return NO_RAG_PROMPT.format(question=question), [], RetrievalTrace(notes="no-RAG")
 
-        passages, trace = self.retriever.retrieve(question, k=self.top_k)
+        passages, trace = self.retriever.retrieve(question, k=k)
         context = "\n\n".join(f"[{i + 1}] {p.text}" for i, p in enumerate(passages))
         prompt = RAG_PROMPT.format(context=context, question=question)
         return prompt, passages, trace
 
-    def run(self, question: str) -> PipelineResult:
-        """Blocking call; returns a complete PipelineResult. Used by the evaluation runner."""
-        prompt, passages, trace = self._retrieve_and_prompt(question)
+    def run(self, question: str, top_k: int | None = None) -> PipelineResult:
+        """Blocking call; returns a complete PipelineResult. Used by the evaluator."""
+        prompt, passages, trace = self._retrieve_and_prompt(question, top_k=top_k)
         answer = self.generator.generate(prompt)
         return PipelineResult(answer=answer, passages=passages, trace=trace)
 
-    def stream(self, question: str) -> tuple[Iterator[str], list[RetrievedPassage], RetrievalTrace]:
+    def stream(
+        self, question: str, top_k: int | None = None
+    ) -> tuple[Iterator[str], list[RetrievedPassage], RetrievalTrace]:
         """
         Streaming call; retrieval is synchronous, generation is streamed.
         Returns (token_iterator, passages, trace) so the UI can show
         retrieved context immediately while the answer streams in below.
         """
-        prompt, passages, trace = self._retrieve_and_prompt(question)
+        prompt, passages, trace = self._retrieve_and_prompt(question, top_k=top_k)
         return self.generator.stream(prompt), passages, trace

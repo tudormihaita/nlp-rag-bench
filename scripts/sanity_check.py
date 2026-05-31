@@ -30,7 +30,7 @@ from ragbench.evaluation.metrics import (
     recall_at_k,
     token_f1,
 )
-from ragbench.factory import build_pipelines
+from ragbench.factory import PipelineName, build_pipelines
 from ragbench.generation.llm import Generator
 from ragbench.indexing.builder import index_exists
 from ragbench.indexing.embedder import Embedder
@@ -43,7 +43,7 @@ def _load_pipelines(embedder: Embedder, gen: Generator) -> dict[str, RAGPipeline
     if not index_exists(settings.embedding_model, str(settings.chroma_db_dir)):
         console.print("[yellow]Vector index not found — only No-RAG available. Build index first.[/yellow]")
         from ragbench.pipeline import RAGPipeline
-        return {"No-RAG": RAGPipeline(generator=gen, retriever=None, top_k=settings.top_k)}
+        return {PipelineName.NO_RAG: RAGPipeline(generator=gen, retriever=None, top_k=settings.top_k)}
     return build_pipelines(embedder, gen, settings)
 
 
@@ -107,7 +107,7 @@ def render_question(
     console.print(metrics_table)
 
     # Decomposition traces (only for methods that produced sub-questions)
-    _DECOMP_METHODS = {"Decomposition", "Iterative Decomposition"}
+    _DECOMP_METHODS = {PipelineName.DECOMPOSITION, PipelineName.ITERATIVE_DECOMPOSITION}
     decomp_runs = [(name, result) for name, result in runs if name in _DECOMP_METHODS and result.trace.sub_queries]
     if decomp_runs:
         console.print()
@@ -180,7 +180,12 @@ def main(args: argparse.Namespace) -> None:
 
     logger.info("Loading models...")
     embedder = Embedder(settings.embedding_model, settings.embedding_device)
-    gen = Generator(settings.generator_model)
+    gen = Generator(
+        settings.generator_model,
+        host=settings.api_url,
+        auth_bearer=settings.api_auth_bearer,
+        api_src=settings.api_src,
+    )
     pipelines = _load_pipelines(embedder, gen)
 
     methods = args.methods or list(pipelines.keys())

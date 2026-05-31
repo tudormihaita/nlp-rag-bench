@@ -2,13 +2,15 @@ import chromadb
 
 from ragbench.indexing.embedder import Embedder
 
-from .base import RetrievedPassage, RetrievalTrace
+from .base import RetrievalTrace, RetrievedPassage
 
-_MAX_PER_TITLE = 2   # max passages from the same article title in final top-k
-_FETCH_MULT = 3      # overfetch factor to ensure k diverse results after filtering
+_MAX_PER_TITLE = 2  # max passages from the same article title in final top-k
+_FETCH_MULT = 3  # overfetch factor to ensure k diverse results after filtering
 
 
-def _diversify(passages: list[RetrievedPassage], max_per_title: int = _MAX_PER_TITLE) -> list[RetrievedPassage]:
+def _diversify(
+    passages: list[RetrievedPassage], max_per_title: int = _MAX_PER_TITLE
+) -> list[RetrievedPassage]:
     """Keep at most max_per_title passages per article title, preserving score order."""
     seen: dict[str, int] = {}
     out = []

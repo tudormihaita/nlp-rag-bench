@@ -13,6 +13,7 @@ class RetrievedPassage:
 @dataclass
 class RetrievalTrace:
     """Optional metadata for the UI to render (sub-questions, rerank scores, etc.)"""
+
     sub_queries: list[str] = field(default_factory=list)
     intermediate_answers: list[str] = field(default_factory=list)
     enriched_queries: list[str] = field(default_factory=list)
@@ -21,5 +22,4 @@ class RetrievalTrace:
 
 
 class Retriever(Protocol):
-    def retrieve(self, query: str, k: int = 5) -> tuple[list[RetrievedPassage], RetrievalTrace]:
-        ...
+    def retrieve(self, query: str, k: int = 5) -> tuple[list[RetrievedPassage], RetrievalTrace]: ...

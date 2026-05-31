@@ -6,7 +6,7 @@ from loguru import logger
 from .embedder import Embedder
 
 COLLECTION_NAME = "musique"
-_CHROMA_BATCH = 5_000 # ChromaDB internal limit for batch size retrieved in a single call
+_CHROMA_BATCH = 5_000  # ChromaDB internal limit for batch size retrieved in a single call
 
 
 def index_exists(model_name: str, base_path: str = "chroma_db") -> bool:
@@ -64,10 +64,7 @@ def build_index(
     embeddings = embedder.encode_passages(texts, batch_size=batch_size)
 
     # ChromaDB has no support for list-typed metadata; join source_qids as CSV
-    metadatas = [
-        {"title": p["title"], "source_qids": ",".join(p["source_qids"])}
-        for p in passages
-    ]
+    metadatas = [{"title": p["title"], "source_qids": ",".join(p["source_qids"])} for p in passages]
 
     for start in range(0, len(passages), _CHROMA_BATCH):
         end = min(start + _CHROMA_BATCH, len(passages))

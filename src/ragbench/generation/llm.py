@@ -1,28 +1,158 @@
-from typing import Iterator
+import json
+from collections.abc import Iterator
 
+import httpx
 import ollama
 
 
-class Generator:
-    def __init__(self, model: str = "qwen2.5:3b-instruct", temperature: float = 0.0) -> None:
+class _OpenAIBackend:
+    """OpenAI-compatible chat backend using httpx."""
+    def __init__(
+        self, base_url: str, model: str, temperature: float, auth_bearer: str | None
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        if self.base_url.endswith("/v1"):
+            self.base_url = self.base_url[:-3]
+        self.model = model
+        self.temperature = temperature
+        self.headers = {"Content-Type": "application/json"}
+        if auth_bearer:
+            self.headers["Authorization"] = f"Bearer {auth_bearer}"
+
+    def _url(self, path: str) -> str:
+        return f"{self.base_url}/v1{path}"
+
+    def health_check(self) -> bool:
+        """Return True if the expected /v1/models endpoint is reachable."""
+        try:
+            with httpx.Client(timeout=10, follow_redirects=True) as client:
+                r = client.get(self._url("/models"), headers=self.headers)
+                r.raise_for_status()
+            return True
+        except Exception:
+            return False
+
+    def chat(self, messages: list[dict], temperature: float | None = None, **_):
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature if temperature is not None else self.temperature,
+        }
+        with httpx.Client(timeout=120, follow_redirects=True) as client:
+            r = client.post(self._url("/chat/completions"), headers=self.headers, json=payload)
+            r.raise_for_status()
+            data = r.json()
+        return data["choices"][0]["message"]["content"].strip()
+
+    def stream(self, messages: list[dict], temperature: float | None = None, **_):
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature if temperature is not None else self.temperature,
+            "stream": True,
+        }
+        with httpx.Client(timeout=120, follow_redirects=True) as client:
+            with client.stream(
+                "POST", self._url("/chat/completions"), headers=self.headers, json=payload
+            ) as r:
+                r.raise_for_status()
+                for line in r.iter_lines():
+                    if line.startswith("data: "):
+                        chunk = line[6:]
+                        if chunk == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(chunk)
+                            delta = obj["choices"][0]["delta"]
+                            if "content" in delta and delta["content"]:
+                                yield delta["content"]
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            continue
+
+
+class _OllamaBackend:
+    """Native Ollama backend via the official ollama Python client."""
+
+    def __init__(self, host: str, model: str, temperature: float, auth_bearer: str | None) -> None:
+        headers = {"Authorization": f"Bearer {auth_bearer}"} if auth_bearer else None
+        self._client = ollama.Client(host=host, headers=headers)
         self.model = model
         self.temperature = temperature
 
-    def generate(self, prompt: str) -> str:
-        """Blocking call; returns the full response string. Used by the evaluator."""
-        response = ollama.chat(
+    def health_check(self) -> bool:
+        """Return True if Ollama responds on /api/tags."""
+        try:
+            self._client.list()
+            return True
+        except Exception:
+            return False
+
+    def chat(self, messages: list[dict], temperature: float | None = None, **_):
+        response = self._client.chat(
             model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            options={"temperature": self.temperature},
+            messages=messages,
+            options={"temperature": temperature if temperature is not None else self.temperature},
         )
         return response["message"]["content"].strip()
 
-    def stream(self, prompt: str) -> Iterator[str]:
-        """Streaming call; yields content chunks as they arrive. Used by the chat UI."""
-        for chunk in ollama.chat(
+    def stream(self, messages: list[dict], temperature: float | None = None, **_):
+        for chunk in self._client.chat(
             model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            options={"temperature": self.temperature},
+            messages=messages,
+            options={"temperature": temperature if temperature is not None else self.temperature},
             stream=True,
         ):
             yield chunk["message"]["content"]
+
+
+class Generator:
+    """Unified generator that talks to Ollama *or* an OpenAI-compatible endpoint.
+
+    Backend selection is controlled by ``api_src`` / the ``API_SRC`` env var:
+      - ``ollama``: uses the native Ollama Python SDK against ``host`` / ``API_URL``
+      - ``openai``: uses an OpenAI-compatible HTTP API at ``host`` / ``API_URL``
+
+    If ``API_AUTH_BEARER`` is set, an ``Authorization: Bearer <token>`` header is
+    injected for both backends.
+    """
+
+    def __init__(
+        self,
+        model: str = "qwen2.5:3b-instruct",
+        temperature: float = 0.0,
+        host: str = "http://localhost:11434",
+        auth_bearer: str | None = None,
+        api_src: str = "ollama",
+    ) -> None:
+        self.model = model
+        self.temperature = temperature
+
+        match api_src:
+            case "ollama":
+                self._backend = _OllamaBackend(
+                    host=host, model=model, temperature=temperature, auth_bearer=auth_bearer
+                )
+            case "openai":
+                self._backend = _OpenAIBackend(
+                    base_url=host, model=model, temperature=temperature, auth_bearer=auth_bearer
+                )
+            case _:
+                raise ValueError(f"Unrecognized API source: {api_src}")
+
+    def health_check(self) -> bool:
+        """Return True if the configured backend is reachable."""
+        return self._backend.health_check()
+
+    def generate(self, prompt: str) -> str:
+        """Blocking call; returns the full response string. Used by the evaluator."""
+        return self._backend.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=self.temperature,
+        )
+
+    def stream(self, prompt: str) -> Iterator[str]:
+        """Streaming call; yields content chunks as they arrive. Used by the chat UI."""
+        yield from self._backend.stream(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=self.temperature,
+        )

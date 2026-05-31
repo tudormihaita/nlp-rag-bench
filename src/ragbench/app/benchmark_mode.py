@@ -1,7 +1,10 @@
 import random
+from collections.abc import Mapping
 from typing import Any
 
 import streamlit as st
+
+from ragbench.app.components import render_trace
 
 from ragbench.evaluation.metrics import (
     all_recall_at_k,
@@ -36,22 +39,21 @@ def _pick_question(questions: list[dict], hop_filter: str) -> dict:
 
 
 def render_benchmark_mode(
-    pipelines: dict[str, RAGPipeline | None],
+    pipelines: Mapping[str, RAGPipeline | None],
     questions: list[dict[str, Any]],
     gold_index: dict[str, list[str]],
     doc_lookup: dict[str, dict[str, Any]],
+    top_k: int,
 ) -> None:
     st.header("Benchmark")
     st.caption("Step through individual MuSiQue questions and see how each method performs.")
 
-    # Controls
-    ctrl_col, filter_col, btn_col = st.columns([1, 1, 1])
+    filter_col, btn_col = st.columns([3, 1])
     with filter_col:
         hop_filter = st.selectbox("Hop count", ["All", "2-hop", "3-hop", "4-hop"], key="bench_hop")
     with btn_col:
-        new_q = st.button("New question", use_container_width=True)
-    with ctrl_col:
         run_btn = st.button("Run all methods", type="primary", use_container_width=True)
+        new_q = st.button("New question", use_container_width=True)
 
     # Pick / refresh question
     hop_changed = hop_filter != st.session_state.get("bench_hop_prev")
@@ -72,7 +74,7 @@ def render_benchmark_mode(
     # Gold reveals
     rev_col1, rev_col2 = st.columns(2)
     with rev_col1:
-        with st.expander(f"Reveal gold answer"):
+        with st.expander("Reveal gold answer"):
             st.markdown(f"**{q['answer']}**")
             if q.get("answer_aliases"):
                 st.caption("Also accepted: " + ", ".join(q["answer_aliases"]))
@@ -90,9 +92,9 @@ def render_benchmark_mode(
     if run_btn:
         active = [(m, p) for m, p in pipelines.items() if p is not None]
         results: dict[str, PipelineResult] = {}
-        with st.spinner("Running all methods…"):
+        with st.spinner("Running all methods..."):
             for method, pipeline in active:
-                results[method] = pipeline.run(q["question"])
+                results[method] = pipeline.run(q["question"], top_k=top_k)
         st.session_state["bench_results"] = results
 
     # Render results
@@ -107,16 +109,20 @@ def render_benchmark_mode(
         for method in active_methods:
             result = results[method]
             m = _compute_metrics(result, references, gold_ids)
-            table_rows.append({
-                "Method": method,
-                "Answer": result.answer[:80] + ("…" if len(result.answer) > 80 else ""),
-                "EM": f"{m['EM']:.2f}",
-                "F1": f"{m['F1']:.2f}",
-                "Hit@k": f"{m['Hit@k']:.2f}" if m["Hit@k"] is not None else "—",
-                "Recall@k": f"{m['Recall@k']:.2f}" if m["Recall@k"] is not None else "—",
-                "All-Rec@k": f"{m['All-Recall@k']:.2f}" if m["All-Recall@k"] is not None else "—",
-                "MRR": f"{m['MRR']:.2f}" if m["MRR"] is not None else "—",
-            })
+            table_rows.append(
+                {
+                    "Method": method,
+                    "Answer": result.answer[:80] + ("…" if len(result.answer) > 80 else ""),
+                    "EM": f"{m['EM']:.2f}",
+                    "F1": f"{m['F1']:.2f}",
+                    "Hit@k": f"{m['Hit@k']:.2f}" if m["Hit@k"] is not None else "—",
+                    "Recall@k": f"{m['Recall@k']:.2f}" if m["Recall@k"] is not None else "—",
+                    "All-Rec@k": f"{m['All-Recall@k']:.2f}"
+                    if m["All-Recall@k"] is not None
+                    else "—",
+                    "MRR": f"{m['MRR']:.2f}" if m["MRR"] is not None else "—",
+                }
+            )
         st.table(table_rows)
 
         # Per-method retrieved passages with ✓/✗ annotations
@@ -135,7 +141,6 @@ def render_benchmark_mode(
                     color = "green" if p.doc_id in gold_set else "red"
                     st.markdown(f":{color}[{marker}] **{p.title}** `{p.score:.3f}`")
                     st.caption(p.text[:200] + ("…" if len(p.text) > 200 else ""))
-                if result.trace.sub_queries:
+                if result.trace.sub_queries or result.trace.rerank_scores or result.trace.notes:
                     with st.expander("Reasoning trace"):
-                        for sq in result.trace.sub_queries:
-                            st.write(f"• {sq}")
+                        render_trace(result.trace, result.passages)

@@ -85,9 +85,7 @@ def ndcg_at_k(retrieved_ids: list[str], gold_ids: list[str]) -> float:
     """Normalized Discounted Cumulative Gain: rewards gold passages ranked higher."""
     gold_set = set(gold_ids)
     dcg = sum(
-        1.0 / math.log2(rank + 2)
-        for rank, doc_id in enumerate(retrieved_ids)
-        if doc_id in gold_set
+        1.0 / math.log2(rank + 2) for rank, doc_id in enumerate(retrieved_ids) if doc_id in gold_set
     )
     # Ideal DCG: all gold passages placed at the top positions
     n_ideal = min(len(gold_ids), len(retrieved_ids))

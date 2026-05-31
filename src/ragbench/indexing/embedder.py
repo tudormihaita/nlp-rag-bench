@@ -6,6 +6,7 @@ def _safe_device(requested: str) -> str:
     if requested == "mps":
         try:
             import torch
+
             if not torch.backends.mps.is_available():
                 return "cpu"
         except Exception:
@@ -15,11 +16,20 @@ def _safe_device(requested: str) -> str:
 
 # Models that require task-specific input prefixes for correct embedding behavior
 PREFIXED_MODELS: dict[str, dict[str, str]] = {
-    "BAAI/bge-large-en-v1.5":         {"query": "Represent this sentence for searching relevant passages: ", "passage": ""},
-    "BAAI/bge-base-en-v1.5":          {"query": "Represent this sentence for searching relevant passages: ", "passage": ""},
-    "BAAI/bge-small-en-v1.5":         {"query": "Represent this sentence for searching relevant passages: ", "passage": ""},
-    "intfloat/e5-base-v2":            {"query": "query: ",        "passage": "passage: "},
-    "intfloat/e5-small-v2":           {"query": "query: ",        "passage": "passage: "},
+    "BAAI/bge-large-en-v1.5": {
+        "query": "Represent this sentence for searching relevant passages: ",
+        "passage": "",
+    },
+    "BAAI/bge-base-en-v1.5": {
+        "query": "Represent this sentence for searching relevant passages: ",
+        "passage": "",
+    },
+    "BAAI/bge-small-en-v1.5": {
+        "query": "Represent this sentence for searching relevant passages: ",
+        "passage": "",
+    },
+    "intfloat/e5-base-v2": {"query": "query: ", "passage": "passage: "},
+    "intfloat/e5-small-v2": {"query": "query: ", "passage": "passage: "},
     "nomic-ai/nomic-embed-text-v1.5": {"query": "search_query: ", "passage": "search_document: "},
 }
 
