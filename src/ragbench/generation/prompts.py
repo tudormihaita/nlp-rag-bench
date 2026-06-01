@@ -1,3 +1,4 @@
+# Author: Tudor Mihaita
 RAG_PROMPT = """\
 Answer the question using the context passages below.
 The question may require chaining facts across multiple passages — follow each step to reach the final answer, not an intermediate one.

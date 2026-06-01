@@ -1,0 +1,68 @@
+sequenceDiagram
+    participant U as User / App
+    participant P as RAGPipeline
+    participant R as Retriever
+    participant DB as ChromaDB
+    participant XE as CrossEncoder
+    participant G as Generator
+
+    U->>P: run(question)
+
+    alt No-RAG
+        P->>G: generate(NO_RAG_PROMPT)
+        G-->>P: answer
+
+    else Classic RAG
+        P->>R: retrieve(question, k=8)
+        R->>DB: query(embed(question), n=24)
+        DB-->>R: top-24 candidates
+        Note right of R: title diversification → top-8
+        R-->>P: passages, RetrievalTrace()
+        P->>G: generate(RAG_PROMPT + context)
+        G-->>P: answer
+
+    else Re-ranking
+        P->>R: retrieve(question, k=8)
+        R->>DB: query(embed(question), n=40)
+        DB-->>R: top-40 candidates
+        R->>XE: predict([query, passage] × 40)
+        XE-->>R: raw logit scores
+        Note right of R: sigmoid(score) · sort · top-8
+        R-->>P: passages, RetrievalTrace(rerank_scores)
+        P->>G: generate(RAG_PROMPT + context)
+        G-->>P: answer
+
+    else Decomposition — static
+        P->>R: retrieve(question, k=8)
+        R->>G: generate(DECOMPOSITION_PROMPT)
+        G-->>R: [sub_q1, sub_q2, ..., sub_qN]
+        loop for each sub_question (N iterations)
+            R->>DB: query(embed(sub_q), n=10)
+            DB-->>R: passages
+        end
+        Note right of R: RRF merge (c=60) across N lists → top-8
+        R-->>P: passages, RetrievalTrace(sub_queries)
+        P->>G: generate(RAG_PROMPT + context)
+        G-->>P: answer
+
+    else Decomposition — iterative
+        P->>R: retrieve(question, k=8)
+        R->>G: generate(DECOMPOSITION_PROMPT)
+        G-->>R: [sub_q1, sub_q2, ..., sub_qN]
+        loop for each sub_question i = 1..N
+            opt i > 1  (prior intermediate answers available)
+                R->>G: generate(REWRITE_PROMPT + known facts)
+                G-->>R: enriched_query (bridge entity resolved)
+            end
+            R->>DB: query(embed(sub_q or enriched_q), n=10)
+            DB-->>R: passages
+            R->>G: generate(INTERMEDIATE_PROMPT + top-4 passages)
+            G-->>R: intermediate_answer
+        end
+        Note right of R: RRF merge (c=60) across N lists → top-8
+        R-->>P: passages, RetrievalTrace(sub_queries,<br/>intermediate_answers, enriched_queries)
+        P->>G: generate(RAG_PROMPT + context)
+        G-->>P: answer
+    end
+
+    P-->>U: PipelineResult(answer, passages, trace)

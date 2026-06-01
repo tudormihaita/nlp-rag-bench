@@ -1,3 +1,4 @@
+# Author: Alexandru Profir
 import random
 from typing import Any
 

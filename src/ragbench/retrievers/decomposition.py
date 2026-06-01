@@ -1,3 +1,4 @@
+# Author: Tudor Mihaita
 import re
 from collections import defaultdict
 from dataclasses import replace

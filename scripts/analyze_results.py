@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Author: Tudor Mihaita
 """
 Aggregate results.csv into per-method and per-method-×-hop summary tables.
 

@@ -1,3 +1,4 @@
+# Author: Alexandru Profir
 import hashlib
 from typing import Any
 

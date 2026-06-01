@@ -57,7 +57,7 @@ We use the **dev split** (test labels are not public) and sample **500 questions
 
 ### Corpus construction
 
-MuSiQue ships ~20 candidate paragraphs per question (2–4 gold + ~16 distractors). We build a **pooled corpus**: deduplicated union of all paragraphs across all sampled questions (~10k unique passages). This makes retrieval competitive — gold passages must compete against distractors from *other* questions, not just their own.
+MuSiQue ships ~20 candidate paragraphs per question (2–4 gold + ~16 distractors). We build a **pooled corpus**: deduplicated union of all paragraphs across all sampled questions (~10k unique passages). Deduplication is by SHA-1 content hash, and each passage records all source question IDs it appeared in. This makes retrieval competitive — gold passages must compete against distractors from *other* questions, not just their own.
 
 No additional chunking is needed — MuSiQue passages are already paragraph-sized.
 
@@ -65,45 +65,61 @@ No additional chunking is needed — MuSiQue passages are already paragraph-size
 
 ## RAG Methods Compared
 
-We compare **3 RAG methods plus a no-RAG baseline (four total)**. All methods are **training-free retrieval-side techniques**: they share the same dense index, the same generator, and the same prompt template — only the retrieval orchestration changes. This isolates the retrieval variable for a fair comparison.
+We compare **4 RAG methods plus a no-RAG baseline (five total)**. All methods are **training-free retrieval-side techniques**: they share the same dense index, the same generator, and the same prompt template — only the retrieval orchestration changes. This isolates the retrieval variable for a fair comparison.
 
 | # | Method | Description | Reference |
 |---|--------|-------------|-----------|
 | 1 | **No-RAG baseline** | Bare LLM call, empty context | Quantifies parametric memory; lower bound |
-| 2 | **Classic RAG** | Top-k dense retrieval (cosine similarity) | Lewis et al. (2020) |
-| 3 | **Cross-encoder re-ranking** | Retrieve top-30 with dense, re-rank with cross-encoder, keep top-5 | Nogueira & Cho (2019) |
-| 4 | **Query decomposition** | LLM splits the question into single-hop sub-questions, retrieves per sub-question, merges results | Trivedi et al. (2023) — IRCoT |
-
-**Expected story** in the final results table: classic RAG performs reasonably on 2-hop, collapses on 3/4-hop. Re-ranking gives uniform gains across hop counts. Decomposition gives *increasing* gains with hop count — that's the visual punchline of the project.
+| 2 | **Classic RAG** | Top-k dense retrieval (cosine similarity) with title diversification | Lewis et al. (2020) |
+| 3 | **Cross-encoder re-ranking** | Retrieve top-40 with bi-encoder, re-rank with cross-encoder, keep top-8 | Nogueira & Cho (2019) |
+| 4 | **Query decomposition** | LLM splits the question into self-contained sub-questions, retrieves per sub-question, merges with RRF | Trivedi et al. (2023) — IRCoT |
+| 5 | **Iterative decomposition** | Like decomposition, but after each hop generates an intermediate answer and rewrites the next sub-question to resolve bridge entities by name | Trivedi et al. (2023) — IRCoT |
 
 **Note on training:** none of these methods require training any model. The cross-encoder is loaded pre-trained from HuggingFace; the decomposer is the same LLM used as the generator, prompted differently. Everything is inference + evaluation.
+
+### Design details
+
+**Classic RAG — title diversification.** The `NaiveRetriever` fetches 3× the requested top-k and then applies a title-level diversity filter (at most 2 passages per article title) before returning top-k. This prevents a single article from crowding out topically distinct evidence.
+
+**Re-ranking.** `ReRankRetriever` wraps `NaiveRetriever`: it fetches 40 candidates (with diversification disabled so the cross-encoder sees the full ranked pool), scores every `(query, passage)` pair with the cross-encoder, and returns the top-8 by sigmoid-normalized rerank score. The re-ranker model is `BAAI/bge-reranker-base`.
+
+**Query decomposition — static mode.** `DecompositionRetriever` prompts the LLM to split the question into 2–4 numbered, self-contained sub-questions (no anaphoric references). Each is retrieved independently via `NaiveRetriever`. Results are merged with **Reciprocal Rank Fusion (RRF, c=60)** rather than simple deduplication: every passage's score is the sum of `1/(c + rank)` across lists, rewarding passages that rank highly in multiple sub-queries.
+
+**Query decomposition — iterative mode.** After retrieving passages for each sub-question, the pipeline generates an **intermediate answer** from the top-4 passages. If the answer is deemed useful (not a refusal marker, between 2 and 150 chars), it is carried forward as a known fact. The *next* sub-question is then rewritten by the LLM to substitute the resolved entity by name (e.g., "Who is the spouse of the actor?" + "Paul Bettany" → "Who is Paul Bettany's spouse?"). This directly targets bridge entities in subsequent retrievals. Results across all enriched sub-queries are still merged with RRF.
 
 ---
 
 ## Generator Model Choice
 
-We use a **small open-weight LLM via Ollama** rather than a frontier API model. Reason: frontier models (GPT-4, Claude) have memorized large portions of Wikipedia, so the no-RAG baseline scores artificially high on MuSiQue and the gaps between RAG methods compress. A 3–8B open model has weaker parametric memory, producing cleaner, more visible RAG gains.
+We use a **small open-weight LLM via Ollama** rather than a frontier API model. Frontier models (GPT-4, Claude) have memorized large portions of Wikipedia, so the no-RAG baseline scores artificially high on MuSiQue and the gaps between RAG methods compress. A 7B open model has weaker parametric memory, producing cleaner, more visible RAG gains.
 
-**Default:** `llama3.1:8b-instruct-q4_K_M` (~5GB quantized, runs on most laptops).
-**Alternatives:** `llama3.2:3b`, `qwen2.5:3b-instruct`, `phi3:mini` — faster, lower quality, fine for iteration.
+**Used in evaluation:** `qwen2.5:7b-instruct` via Ollama.
 
-**Methodology check:** evaluate the chosen LLM with no retrieval on 50 random MuSiQue questions. If F1 > 20%, the model is memorizing too much — drop to a smaller variant.
+**Alternatives:** `llama3.1:8b-instruct-q4_K_M`, `llama3.2:3b`, `qwen2.5:3b-instruct` — all work with the same setup.
+
+The generator supports two backends, selectable via environment variables:
+- **`ollama`** (default) — native Ollama Python SDK against a local or remote Ollama server
+- **`openai`** — any OpenAI-compatible HTTP endpoint (Together AI, vLLM, LM Studio, etc.) with optional bearer token auth
+
+**Memorization check:** run `memorization_check.py` to evaluate the LLM with no retrieval on 50 random questions. The no-RAG F1 of 0.037 (3.7%) confirms the model is not memorizing MuSiQue answers.
 
 ---
 
 ## Embedding Model Choice
 
-The embedder is fixed across all retrieval methods and used both at indexing time and at query time. The default is **`BAAI/bge-small-en-v1.5`** — strong MTEB scores on retrieval, small (~133MB, 384 dim), and well-suited to Wikipedia-style passages.
+The embedder is fixed across all retrieval methods and used both at indexing time and at query time. The default is **`BAAI/bge-large-en-v1.5`** — top MTEB retrieval scores, well-suited to Wikipedia-style passages.
 
-| Model | Dim | Size | Notes |
-|---|---|---|---|
-| **`BAAI/bge-small-en-v1.5`** ✓ default | 384 | ~133MB | Fast, strong on retrieval, well-balanced |
-| `BAAI/bge-base-en-v1.5` | 768 | ~440MB | Stronger quality if compute allows; ~2× slower |
-| `sentence-transformers/all-MiniLM-L6-v2` | 384 | ~90MB | Very fast, slightly weaker than BGE; widely used fallback |
-| `intfloat/e5-base-v2` | 768 | ~440MB | Strong retrieval scores; **requires `"query: "` / `"passage: "` prefixes** |
-| `nomic-ai/nomic-embed-text-v1.5` | 768 | ~550MB | Recent, strong; **requires `"search_query: "` / `"search_document: "` prefixes** |
+| Model | Dim | Notes |
+|---|---|---|
+| **`BAAI/bge-large-en-v1.5`** ✓ used | 1024 | Highest retrieval quality in the BGE family; requires query prefix |
+| `BAAI/bge-base-en-v1.5` | 768 | Good balance of quality and speed |
+| `BAAI/bge-small-en-v1.5` | 384 | Fast, smaller footprint |
+| `intfloat/e5-base-v2` | 768 | Strong retrieval; requires `"query: "` / `"passage: "` prefixes |
+| `nomic-ai/nomic-embed-text-v1.5` | 768 | Recent, strong; requires `"search_query: "` / `"search_document: "` prefixes |
 
-**Important:** the embedder choice is bound to the index. Different models produce different vectors with different dimensions, so swapping the embedder requires rebuilding the index. We persist each index under a model-specific folder (`chroma_db/<model_slug>/`) so multiple indexes can coexist.
+**BGE query prefix:** BGE models require a task instruction prepended to queries at inference time — `"Represent this sentence for searching relevant passages: "` — but no prefix for passages. This is handled automatically by the `Embedder` class via a `PREFIXED_MODELS` lookup table.
+
+**Important:** the embedder choice is bound to the index. Different models produce different vectors with different dimensions, so swapping the embedder requires rebuilding the index. Each model gets its own directory under `chroma_db/<model_slug>/` so multiple indexes can coexist.
 
 ---
 
@@ -117,31 +133,52 @@ All metrics computed per question, then aggregated by `(method, hop_count)` slic
 |---|---|
 | **Hit@k** | Did *any* gold paragraph appear in the top-k? |
 | **Recall@k** | Fraction of gold paragraphs retrieved in top-k |
-| **All-Recall@k** | Were *all* gold paragraphs retrieved? (harsh metric, exposes multi-hop failures) |
+| **All-Recall@k** | Were *all* gold paragraphs retrieved? (strict multi-hop metric) |
 | **MRR** | Mean reciprocal rank of the first gold paragraph |
+| **Precision@k** | Fraction of retrieved passages that are gold (noise ratio) |
+| **NDCG@k** | Normalized Discounted Cumulative Gain; rewards gold passages ranked higher |
 
 ### Generation (using `answer` + `answer_aliases` as references)
 
 | Metric | Definition |
 |---|---|
 | **Exact Match (EM)** | Strict match after SQuAD-style normalization (lowercase, strip articles/punct) |
-| **Token F1** | Token-level overlap with gold answer (the standard QA metric) |
-| **LLM-as-judge** | Binary correctness scored by Claude / GPT-4o (catches semantically correct answers EM/F1 miss) |
+| **Token F1** | Token-level overlap with gold answer; best match across all references |
 
-### Optional (if time permits): RAGAS
+All generation metrics take the best score over `answer` + `answer_aliases` so valid paraphrases are not penalized.
 
-Reference-free LLM-as-judge metrics — **faithfulness**, **context precision**, **context recall**. Useful but adds API cost and noise; not required for the core results.
+---
 
-### Headline output
+## Results
 
-A single comparison table:
+All five methods evaluated on 500 questions (200 × 2-hop, 200 × 3-hop, 100 × 4-hop). Generator: `qwen2.5:7b-instruct`. Embedder: `BAAI/bge-large-en-v1.5`. Top-k: 8.
 
-| Method | Recall@5 (2h) | Recall@5 (3h) | Recall@5 (4h) | F1 (2h) | F1 (3h) | F1 (4h) |
+### Generation metrics (EM / Token F1)
+
+| Method | EM (2h) | F1 (2h) | EM (3h) | F1 (3h) | EM (4h) | F1 (4h) |
 |---|---|---|---|---|---|---|
-| No-RAG | — | — | — | … | … | … |
-| Classic RAG | … | … | … | … | … | … |
-| Re-ranking | … | … | … | … | … | … |
-| Decomposition | … | … | … | … | … | … |
+| No-RAG | 0.020 | 0.042 | 0.000 | 0.033 | 0.000 | 0.031 |
+| Classic RAG | 0.175 | 0.241 | 0.100 | 0.167 | 0.060 | 0.116 |
+| Re-ranking | 0.265 | 0.363 | 0.205 | 0.321 | 0.080 | 0.156 |
+| Decomposition | 0.375 | 0.460 | 0.195 | 0.289 | 0.100 | 0.178 |
+| Iterative Decomposition | **0.490** | **0.580** | **0.335** | **0.409** | **0.130** | **0.225** |
+
+### Retrieval metrics (Recall@k / All-Recall@k)
+
+| Method | Rec@k (2h) | AllRec@k (2h) | Rec@k (3h) | AllRec@k (3h) | Rec@k (4h) | AllRec@k (4h) |
+|---|---|---|---|---|---|---|
+| No-RAG | — | — | — | — | — | — |
+| Classic RAG | 0.680 | 0.435 | 0.568 | 0.175 | 0.453 | 0.060 |
+| Re-ranking | 0.642 | 0.360 | 0.589 | 0.165 | 0.504 | 0.090 |
+| Decomposition | 0.735 | 0.510 | 0.580 | 0.165 | 0.488 | 0.090 |
+| Iterative Decomposition | **0.838** | **0.715** | **0.637** | **0.270** | **0.577** | **0.130** |
+
+**Key findings:**
+- No-RAG F1 of 3.7% confirms `qwen2.5:7b` has minimal MuSiQue memorization, producing clean RAG deltas.
+- Classic RAG degrades sharply with hop count (F1: 0.241 → 0.167 → 0.116). Its single-query retrieval fails to gather all required evidence hops.
+- Re-ranking adds a large uniform gain (~5 pp EM) primarily from improved cross-encoder scoring, but All-Recall@k actually drops slightly versus Classic RAG — the cross-encoder excels at ranking but the candidate pool is unchanged.
+- Static decomposition improves 2-hop the most (+10 pp EM over re-ranking at 2h) but is less consistent at 3–4 hops, where individual sub-questions may still fail to resolve bridge entities by name.
+- Iterative decomposition is the strongest method across all hop counts. The intermediate answer → sub-question rewrite step directly addresses the bridge-entity bottleneck. All-Recall@k jumps from 0.510 to 0.715 at 2-hop, confirming it gathers all supporting passages more reliably. The gap widens with hop count, which is the expected behavior for an iterative chain-of-thought style retriever.
 
 ---
 
@@ -150,24 +187,24 @@ A single comparison table:
 A Streamlit app with three modes:
 
 ### 1. Chat Mode (primary UX)
-- Free-form question input, conversational layout
-- Sidebar: method selector, generator selector, top-k slider
-- Each answer comes with an expandable **"Retrieved context"** panel showing the chunks used, their scores, and source paragraph titles
-- For query decomposition: a **"Reasoning trace"** panel showing the sub-questions and what was retrieved for each — strong visual differentiator
+- Free-form question input with streaming responses
+- Sidebar: method selector, top-k slider, generator model display
+- Each answer comes with an expandable **"Retrieved context"** panel showing passages, their scores, and source paragraph titles
+- For decomposition methods: a **"Reasoning trace"** panel showing sub-questions, enriched queries (iterative mode), and intermediate answers (iterative mode)
+- For re-ranking: trace shows rerank scores alongside original passages
 
 ### 2. Compare Mode
 - One question, all methods run in parallel
-- Side-by-side answer columns with retrieval traces
-- The signature screenshot for the project: same question, no-RAG hallucinates, classic RAG gets close, decomposition gets it right
+- Side-by-side answer columns with per-method retrieval traces
+- The signature screenshot for the project: same question, no-RAG fails, classic RAG partially answers, iterative decomposition chains the hops correctly
 
 ### 3. Benchmark Mode
 - Pull a random question from the sampled MuSiQue set (filterable by hop count)
 - Reveal toggles for the gold answer and gold supporting paragraphs
 - Run all methods, display answers and per-question metrics live with ✓/✗ annotations for retrieved-vs-gold passages
-- Lets a user *experience* the difficulty curve, not just read it in the report
+- Lets a user *experience* the difficulty curve rather than just read it in the report
 
-### Optional deployment
-Local Streamlit is sufficient for the demo. If public access is required, push to **HuggingFace Spaces** with a hosted LLM endpoint (Together AI, Anthropic, or OpenAI) instead of local Ollama.
+The app degrades gracefully: if the vector index has not been built, only the No-RAG pipeline is available; if the LLM backend is unreachable, an error banner is shown before anything loads.
 
 ---
 
@@ -175,16 +212,15 @@ Local Streamlit is sufficient for the demo. If public access is required, push t
 
 | Component | Choice | Notes |
 |---|---|---|
-| **Orchestration** | LlamaIndex `llama-index-core` | Clean retriever-swapping API; can drop to raw ChromaDB if abstraction fights back |
-| **Vector store** | ChromaDB (persistent) | In-process, no server needed |
-| **Embeddings** | `BAAI/bge-small-en-v1.5` via `sentence-transformers` | Swappable via config; see table above |
-| **Re-ranker** | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Runs on CPU |
-| **Generator LLM** | Ollama (`llama3.1:8b-instruct`, fallback `llama3.2:3b`, `qwen2.5:3b`) | Local inference, no API key needed |
-| **LLM-as-judge** | Anthropic Claude or OpenAI GPT-4o | Evaluation only; called via API |
-| **UI** | Streamlit | Three-mode layout (chat / compare / benchmark) |
-| **Evaluation** | Custom (EM, F1, Recall@k, MRR) + optional RAGAS | SQuAD-style normalization for EM/F1 |
+| **Vector store** | ChromaDB (persistent) | In-process, no server needed; HNSW cosine index |
+| **Embeddings** | `BAAI/bge-large-en-v1.5` via `sentence-transformers` | Swappable via config; query prefix handled automatically |
+| **Re-ranker** | `BAAI/bge-reranker-base` | Cross-encoder; runs on CPU or MPS |
+| **Generator LLM** | Ollama (`qwen2.5:7b-instruct`) or any OpenAI-compatible endpoint | Backend selectable via `RAGBENCH_API_SRC` env var |
+| **Merge strategy** | Reciprocal Rank Fusion (RRF, c=60) | Used by both decomposition modes to merge per-sub-query results |
+| **UI** | Streamlit | Three-mode layout (chat / compare / benchmark); streaming responses |
+| **Evaluation** | Custom (EM, F1, Hit@k, Recall@k, All-Recall@k, MRR, P@k, NDCG@k) | SQuAD-style normalization; checkpoint/resume; LaTeX export |
 | **Dataset** | MuSiQue-Answerable v1.0 (dev split) | Sampled 500 questions stratified by hop count |
-| **Package manager** | `uv` | |
+| **Package manager** | `uv` | Python 3.11+ required |
 
 ---
 
@@ -193,444 +229,125 @@ Local Streamlit is sufficient for the demo. If public access is required, push t
 ```
 nlp-rag-bench/
 ├── pyproject.toml
-├── .env.example                # API keys template (LLM-as-judge)
+├── .env.example                  # API keys template and env var reference
 ├── data/
 │   ├── musique/
 │   │   └── musique_ans_v1.0_dev.jsonl
 │   └── processed/
 │       ├── sampled_questions.json    # 500 stratified questions
-│       └── pooled_corpus.json        # ~10k deduplicated paragraphs
-├── chroma_db/                  # persisted vector stores, one per embedder (gitignored)
-│   ├── bge-small-en-v1.5/
-│   └── bge-base-en-v1.5/
+│       ├── pooled_corpus.json        # ~10k deduplicated paragraphs
+│       └── gold_index.json           # {question_id: [doc_id, ...]}
+├── chroma_db/                    # persisted vector stores, one per embedder (gitignored)
+│   └── bge-large-en-v1.5/
+├── results/                      # per-method CSVs + merged results.csv
+│   ├── no_rag.csv
+│   ├── classic_rag.csv
+│   ├── re_ranking.csv
+│   ├── decomposition.csv
+│   ├── iterative_decomposition.csv
+│   └── results.csv               # merged across all methods
 ├── src/
 │   └── ragbench/
 │       ├── __init__.py
-│       ├── config.py           # pydantic-settings: paths, model names, top-k, sampling seed
+│       ├── config.py             # pydantic-settings: paths, model names, top-k, devices
+│       ├── factory.py            # build_pipelines(): constructs all 5 pipelines from shared components
+│       ├── pipeline.py           # RAGPipeline: run() (blocking) + stream() (for the UI)
 │       ├── data/
-│       │   ├── loader.py       # parse MuSiQue JSONL, extract hop counts from IDs
-│       │   ├── sampler.py      # stratified sampling by hop count
-│       │   └── corpus.py       # pool + deduplicate paragraphs across questions
+│       │   ├── loader.py         # parse MuSiQue JSONL, extract hop count from id prefix
+│       │   ├── sampler.py        # stratified sampling by hop count, fixed seed
+│       │   └── corpus.py         # pool + deduplicate paragraphs; build gold_index
 │       ├── indexing/
-│       │   ├── embedder.py     # wraps sentence-transformers; swappable model
-│       │   └── builder.py      # encode corpus + persist to ChromaDB
+│       │   ├── embedder.py       # Embedder wrapper; PREFIXED_MODELS for query/passage prefixes
+│       │   └── builder.py        # encode corpus in batches, persist to ChromaDB; build_index / load_collection
 │       ├── retrievers/
-│       │   ├── base.py         # Retriever protocol + RetrievedPassage + RetrievalTrace
-│       │   ├── naive.py        # classic dense top-k
-│       │   ├── reranking.py    # dense top-30 → cross-encoder rerank → top-5
-│       │   └── decomposition.py# LLM decomposes → retrieve per sub-question → merge
+│       │   ├── base.py           # Retriever Protocol; RetrievedPassage; RetrievalTrace
+│       │   ├── naive.py          # NaiveRetriever: dense top-k with title diversification
+│       │   ├── reranking.py      # ReRankRetriever: bi-encoder candidates → cross-encoder rerank
+│       │   └── decomposition.py  # DecompositionRetriever: static (RRF) and iterative (bridge-entity rewrite) modes
 │       ├── generation/
-│       │   ├── llm.py          # Ollama wrapper
-│       │   └── prompts.py      # shared QA prompt + decomposition prompt
-│       ├── pipeline.py         # RAGPipeline: composes retriever + generator
+│       │   ├── llm.py            # Generator: Ollama + OpenAI-compatible backends; generate() + stream()
+│       │   └── prompts.py        # RAG_PROMPT, NO_RAG_PROMPT, DECOMPOSITION_PROMPT, INTERMEDIATE_PROMPT, REWRITE_PROMPT
 │       ├── evaluation/
-│       │   ├── metrics.py      # EM, F1, Recall@k, MRR, All-Recall@k
-│       │   ├── judge.py        # optional LLM-as-judge
-│       │   └── runner.py       # evaluate one method over the sampled set
+│       │   ├── metrics.py        # EM, F1, Hit@k, Recall@k, All-Recall@k, MRR, P@k, NDCG@k
+│       │   ├── judge.py          # stub: LLM-as-judge (not implemented)
+│       │   └── evaluator.py      # evaluate_method(): checkpoint/resume CSV writer
 │       └── app/
-│           ├── streamlit_app.py    # entrypoint with mode selector
-│           ├── chat_mode.py
-│           ├── compare_mode.py
-│           └── benchmark_mode.py
-├── notebooks/
-│   ├── 01_dataset_exploration.ipynb
-│   └── 02_results_analysis.ipynb
+│           ├── streamlit_app.py  # entrypoint; tab layout; health check; cached resource loading
+│           ├── chat_mode.py      # streaming chat with retrieval trace
+│           ├── compare_mode.py   # side-by-side all methods
+│           ├── benchmark_mode.py # random MuSiQue question with gold reveal
+│           └── components.py     # shared UI rendering helpers
 └── scripts/
-    ├── prepare_data.py         # CLI: load → sample → pool → save processed/
-    ├── build_index.py          # CLI: embed pooled corpus → persist ChromaDB
-    ├── evaluate.py             # CLI: run all methods, save results, print table
-    └── memorization_check.py   # CLI: no-RAG baseline on 50 questions
+    ├── download_data.py          # CLI: download + unpack MuSiQue from Google Drive or local zip
+    ├── prepare_data.py           # CLI: load → sample → pool → save processed/
+    ├── build_index.py            # CLI: embed pooled corpus → persist ChromaDB
+    ├── memorization_check.py     # CLI: no-RAG baseline on 50 questions
+    ├── sanity_check.py           # CLI: end-to-end smoke test on a single question
+    ├── evaluate.py               # CLI: run all methods, checkpoint per-method CSVs, print table
+    └── analyze_results.py        # CLI: aggregate results.csv; rich tables + optional LaTeX export
 ```
 
 ---
 
 ## Pipeline / Process
 
-The pipeline runs once for setup, then is reused for every query and every evaluation run.
+```mermaid
+graph TD
+    subgraph setup ["① Data Preparation"]
+        JSONL[/"musique_ans_v1.0_dev.jsonl\n2 417 questions"/]
+        PREP["Data preparation\nload · stratified sample · pool + deduplicate"]
+        PROC[/"Processed sample\nsampled_questions.json\npooled_corpus.json · gold_index.json"/]
+        EMB["Embedder\nBAAI/bge-large-en-v1.5"]
+        BIDX["Index builder\nencode passages in batches"]
+        DB[("ChromaDB\n~10 k passages · cosine HNSW")]
+        JSONL --> PREP --> PROC
+        PROC --> BIDX
+        EMB --> BIDX --> DB
+    end
 
-### Setup (one-time)
+    subgraph pipeline ["② RAGPipeline — per query"]
+        Q(["Question"])
+        RET["Retriever\nswappable - 5 methods"]
+        GEN["Generator\nOllama or OpenAI-compatible API"]
+        RES(["PipelineResult\nanswer · passages · RetrievalTrace"])
+        Q --> RET
+        DB -.->|"cosine lookup"| RET
+        RET -->|"top-k passages + trace"| GEN --> RES
+    end
 
-```
-[MuSiQue dev JSONL]
-        │
-        ▼  prepare_data.py
-[sample 500 questions by hop count]
-        │
-        ▼
-[pool & dedupe paragraphs] ──► data/processed/
-        │
-        ▼  build_index.py
-[embed all paragraphs with chosen embedder]
-        │
-        ▼
-[persist to ChromaDB] ──► chroma_db/<model_slug>/
-```
+    subgraph app ["③ Streamlit App — interactive benchmarking"]
+        A1["Chat Mode\nstreaming answer · retrieval trace · reasoning trace"]
+        A2["Compare Mode\nall methods side-by-side"]
+        A3["Benchmark Mode\nrandom MuSiQue question · gold reveal\nlive EM/F1 · passage annotation"]
+        RES --> A1 & A2 & A3
+    end
 
-### Per query (runtime, swappable)
-
-```
-       [user question]
-              │
-              ▼
-   ┌─────────────────────┐
-   │   Retriever (one of):│
-   │   • naive            │
-   │   • reranking        │
-   │   • decomposition    │
-   └─────────────────────┘
-              │
-              ▼ top-k passages
-   [build prompt: question + context]
-              │
-              ▼
-   [Llama 3.1 8B via Ollama]
-              │
-              ▼
-       [generated answer]
-              │
-              ▼
-   [render in UI: answer + retrieved chunks + reasoning trace]
+    subgraph eval ["④ Evaluation — offline batch"]
+        EV["Evaluator\n500 q × 5 methods · checkpoint/resume"]
+        MET["Performance metrics\nEM · F1\nHit@k · Rec@k · AllRec@k\nMRR · P@k · NDCG@k"]
+        CSV[/"Per-method benchmarking\n2 500 rows"/]
+        ANA["Results generation\nCSV export"]
+        PROC -->|"questions + gold index"| EV
+        EV --> MET --> CSV --> ANA
+    end
 ```
 
 ### Per evaluation run (offline)
 
 ```
-for method in [no_rag, naive, reranking, decomposition]:
+for method in [no_rag, classic_rag, reranking, decomposition, iterative_decomposition]:
     for question in sampled_500:
-        retrieved = method.retrieve(question)
-        answer    = generator.generate(question, retrieved)
-        record(retrieval_metrics(retrieved, gold_paragraphs),
-               generation_metrics(answer, gold_answers),
+        result  = pipeline.run(question)
+        record(retrieval_metrics(result.passages, gold_index[question.id]),
+               generation_metrics(result.answer, question.answer + aliases),
                hop_count(question.id))
+    checkpoint per-method CSV after each question
 
+merge CSVs → results/results.csv
 aggregate by (method, hops) → print headline table
 ```
 
-The retriever is the only swappable component. Generator, embedder, prompt, and corpus are fixed — that's what makes the comparison fair.
-
----
-
-## Implementation Plan
-
-Suggested split: **Person A** owns data + indexing + classic RAG + UI scaffolding. **Person B** owns the two improvement methods + evaluation + UI mode-specific panels.
-
----
-
-### Phase 1 — Data, Embedding & Indexing
-
-**Files involved**
-
-| File | Responsibility |
-|---|---|
-| `data/loader.py` | Read `musique_ans_v1.0_dev.jsonl`, parse each record, extract hop count from `id` prefix |
-| `data/sampler.py` | Stratified sampling by hop count (200 × 2-hop, 200 × 3-hop, 100 × 4-hop), fixed seed |
-| `data/corpus.py` | Pool + dedupe paragraphs across sampled questions; build `gold_paragraphs[qid] -> set` mapping |
-| `indexing/embedder.py` | Thin wrapper around `sentence-transformers`; reads model name from config |
-| `indexing/builder.py` | Encode pooled corpus in batches, persist to ChromaDB under model-specific path |
-| `scripts/prepare_data.py` | CLI orchestrating loader → sampler → corpus, writes `data/processed/` |
-| `scripts/build_index.py` | CLI orchestrating embedder → builder, writes `chroma_db/<model_slug>/` |
-
-**Embedder design** — single wrapper used by both indexer and retrievers (they must match):
-
-```python
-# src/ragbench/indexing/embedder.py
-from sentence_transformers import SentenceTransformer
-
-# Models that require input prefixes for query vs passage.
-PREFIXED_MODELS = {
-    "intfloat/e5-base-v2":            {"query": "query: ",        "passage": "passage: "},
-    "intfloat/e5-small-v2":           {"query": "query: ",        "passage": "passage: "},
-    "nomic-ai/nomic-embed-text-v1.5": {"query": "search_query: ", "passage": "search_document: "},
-}
-
-class Embedder:
-    def __init__(self, model_name: str, device: str = "cpu"):
-        self.model_name = model_name
-        self.model = SentenceTransformer(model_name, device=device)
-        self.prefixes = PREFIXED_MODELS.get(model_name, {"query": "", "passage": ""})
-
-    def encode_passages(self, texts: list[str], batch_size: int = 64):
-        prefixed = [self.prefixes["passage"] + t for t in texts]
-        return self.model.encode(prefixed, batch_size=batch_size,
-                                 normalize_embeddings=True, show_progress_bar=True)
-
-    def encode_query(self, text: str):
-        return self.model.encode(self.prefixes["query"] + text,
-                                 normalize_embeddings=True)
-
-    @property
-    def slug(self) -> str:
-        return self.model_name.split("/")[-1]  # used in index path
-```
-
-**Index builder** — persists per-model so swapping embedders doesn't clobber:
-
-```python
-# src/ragbench/indexing/builder.py
-import chromadb
-from .embedder import Embedder
-
-def build_index(passages: list[dict], embedder: Embedder, base_path: str = "chroma_db"):
-    path = f"{base_path}/{embedder.slug}"
-    client = chromadb.PersistentClient(path=path)
-    collection = client.get_or_create_collection(
-        name="musique", metadata={"hnsw:space": "cosine"}
-    )
-    texts = [p["text"] for p in passages]
-    embeddings = embedder.encode_passages(texts)
-    collection.add(
-        ids=[p["doc_id"] for p in passages],
-        documents=texts,
-        embeddings=embeddings.tolist(),
-        metadatas=[{"title": p["title"]} for p in passages],
-    )
-    return collection
-```
-
-**Swapping the embedding model** — change one line in `config.py`, re-run `build_index.py`:
-
-```python
-# src/ragbench/config.py
-from pydantic_settings import BaseSettings
-
-class Settings(BaseSettings):
-    embedding_model: str = "BAAI/bge-small-en-v1.5"  # ← change here
-    generator_model:  str = "llama3.1:8b-instruct-q4_K_M"
-    top_k: int = 5
-    sampling_seed: int = 42
-    # ... no other code changes needed
-```
-
-**Checklist**
-- [A] Implement loader + sampler + corpus pooler
-- [A] Implement `Embedder` and `build_index`
-- [A] Run `prepare_data.py` then `build_index.py`
-- [A] `memorization_check.py` — verify no-RAG F1 < 20% on the chosen LLM
-- **Milestone:** corpus pooled, index persisted, sampled questions loaded; chosen LLM verified non-memorizing
-
----
-
-### Phase 2 — Generator, Retriever Interface & Pipeline
-
-This phase establishes the abstractions that the two improvement methods will plug into. Get this right and Phase 3 is mostly filling in two small classes.
-
-**Files involved**
-
-| File | Responsibility |
-|---|---|
-| `generation/llm.py` | Wrap Ollama HTTP API behind a simple `Generator` interface |
-| `generation/prompts.py` | Centralized prompt templates (RAG, no-RAG, decomposition) |
-| `retrievers/base.py` | `Retriever` Protocol, `RetrievedPassage`, `RetrievalTrace` dataclasses |
-| `retrievers/naive.py` | Classic dense top-k retriever |
-| `pipeline.py` | `RAGPipeline` — composes a retriever + generator; supports no-RAG via `retriever=None` |
-| `app/chat_mode.py` | Streamlit chat UI with method selector wired to one pipeline-per-method |
-
-**Generator wrapper** — one class, one method, shared across all RAG methods:
-
-```python
-# src/ragbench/generation/llm.py
-import ollama
-
-class Generator:
-    def __init__(self, model: str = "llama3.1:8b-instruct-q4_K_M", temperature: float = 0.0):
-        self.model = model
-        self.temperature = temperature
-
-    def generate(self, prompt: str) -> str:
-        response = ollama.chat(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            options={"temperature": self.temperature},
-        )
-        return response["message"]["content"].strip()
-```
-
-**Prompt templates** — kept identical across RAG methods to isolate the retrieval variable:
-
-```python
-# src/ragbench/generation/prompts.py
-RAG_PROMPT = """Answer the question based ONLY on the context below. \
-If the answer cannot be determined from the context, say "I don't know."
-
-Context:
-{context}
-
-Question: {question}
-
-Answer:"""
-
-NO_RAG_PROMPT = """Answer the question concisely. If you don't know, say "I don't know."
-
-Question: {question}
-
-Answer:"""
-
-DECOMPOSITION_PROMPT = """Decompose the following multi-hop question into 2-4 \
-simple sub-questions that can be answered one at a time. Output ONLY the sub-questions, \
-one per line, numbered.
-
-Question: {question}
-
-Sub-questions:"""
-```
-
-**Retriever protocol** — the contract every method implements:
-
-```python
-# src/ragbench/retrievers/base.py
-from dataclasses import dataclass, field
-from typing import Protocol
-
-@dataclass
-class RetrievedPassage:
-    doc_id: str
-    text: str
-    title: str
-    score: float
-
-@dataclass
-class RetrievalTrace:
-    """Optional metadata the UI can render (sub-questions, rerank scores, etc.)."""
-    sub_queries: list[str] = field(default_factory=list)
-    rerank_scores: list[float] = field(default_factory=list)
-    notes: str = ""
-
-class Retriever(Protocol):
-    def retrieve(self, query: str, k: int = 5) -> tuple[list[RetrievedPassage], RetrievalTrace]:
-        ...
-```
-
-**Naive retriever** — the reference implementation:
-
-```python
-# src/ragbench/retrievers/naive.py
-from .base import RetrievedPassage, RetrievalTrace
-
-class NaiveRetriever:
-    def __init__(self, collection, embedder):
-        self.collection = collection
-        self.embedder = embedder
-
-    def retrieve(self, query: str, k: int = 5):
-        q_emb = self.embedder.encode_query(query)
-        res = self.collection.query(query_embeddings=[q_emb.tolist()], n_results=k)
-        passages = [
-            RetrievedPassage(doc_id=i, text=t, title=m["title"], score=1.0 - d)
-            for i, t, m, d in zip(
-                res["ids"][0], res["documents"][0],
-                res["metadatas"][0], res["distances"][0]
-            )
-        ]
-        return passages, RetrievalTrace()
-```
-
-**Pipeline** — composes a retriever and generator; handles no-RAG by passing `retriever=None`:
-
-```python
-# src/ragbench/pipeline.py
-from dataclasses import dataclass
-from .retrievers.base import Retriever, RetrievedPassage, RetrievalTrace
-from .generation.llm import Generator
-from .generation.prompts import RAG_PROMPT, NO_RAG_PROMPT
-
-@dataclass
-class PipelineResult:
-    answer: str
-    passages: list[RetrievedPassage]
-    trace: RetrievalTrace
-
-class RAGPipeline:
-    def __init__(self, generator: Generator, retriever: Retriever | None = None, top_k: int = 5):
-        self.generator = generator
-        self.retriever = retriever
-        self.top_k = top_k
-
-    def run(self, question: str) -> PipelineResult:
-        if self.retriever is None:
-            answer = self.generator.generate(NO_RAG_PROMPT.format(question=question))
-            return PipelineResult(answer=answer, passages=[], trace=RetrievalTrace(notes="no-RAG"))
-
-        passages, trace = self.retriever.retrieve(question, k=self.top_k)
-        context = "\n\n".join(f"[{i+1}] {p.text}" for i, p in enumerate(passages))
-        prompt = RAG_PROMPT.format(context=context, question=question)
-        answer = self.generator.generate(prompt)
-        return PipelineResult(answer=answer, passages=passages, trace=trace)
-```
-
-**How the UI uses it** — one pipeline instance per method, sidebar swaps which is active:
-
-```python
-# src/ragbench/app/chat_mode.py (sketch)
-PIPELINES = {
-    "No-RAG":        RAGPipeline(generator=gen, retriever=None),
-    "Classic RAG":   RAGPipeline(generator=gen, retriever=NaiveRetriever(collection, embedder)),
-    "Re-ranking":    RAGPipeline(generator=gen, retriever=ReRankRetriever(...)),     # Phase 3
-    "Decomposition": RAGPipeline(generator=gen, retriever=DecompositionRetriever(...)),# Phase 3
-}
-
-method = st.sidebar.selectbox("Retrieval method", list(PIPELINES.keys()))
-question = st.chat_input("Ask a question")
-if question:
-    result = PIPELINES[method].run(question)
-    st.write(result.answer)
-    with st.expander("Retrieved context"):
-        for p in result.passages:
-            st.markdown(f"**{p.title}** (score: {p.score:.3f})\n\n{p.text}")
-    if result.trace.sub_queries:
-        with st.expander("Reasoning trace"):
-            for sq in result.trace.sub_queries:
-                st.write(f"• {sq}")
-```
-
-**Checklist**
-- [A] Implement `Generator`, `Retriever` protocol, `NaiveRetriever`, `RAGPipeline`
-- [A] Write `prompts.py` with shared templates
-- [A] Wire chat mode with method selector — only `No-RAG` and `Classic RAG` active for now
-- **Milestone:** working chat UI; switching between No-RAG and Classic RAG produces visibly different answers on a hard MuSiQue question
-
----
-
-### Phase 3 — Improvement Methods
-
-Both methods implement the same `Retriever` protocol and plug into the existing `RAGPipeline` without modification.
-
-- [B] **Cross-encoder re-ranking** (~30 lines) — `retrievers/reranking.py`
-  - Wrap `NaiveRetriever` to fetch top-30; score each `(query, passage)` pair with `cross-encoder/ms-marco-MiniLM-L-6-v2`; return top-5
-  - Trace exposes rerank scores
-- [B] **Query decomposition** (~80–100 lines) — `retrievers/decomposition.py`
-  - Prompt the LLM with `DECOMPOSITION_PROMPT` to produce sub-questions
-  - Parse sub-questions, retrieve top-k per sub-question via `NaiveRetriever`
-  - Merge with deduplication (highest score wins), return top-k overall
-  - Trace exposes the sub-questions for the UI's "Reasoning trace" panel
-- [B] Register both pipelines in the chat-mode method selector
-
-**Milestone:** all 4 methods (No-RAG + Classic + Re-ranking + Decomposition) selectable; per-question latency reasonable (decomposition will be slowest, ~10–20s per question with 8B model).
-
----
-
-### Phase 4 — Evaluation
-
-- [B] Implement EM, F1, Recall@k, MRR, All-Recall@k in `evaluation/metrics.py` (use SQuAD normalization for EM/F1)
-- [B] `runner.py` iterates `(method, question)`, calls `pipeline.run()`, records metrics + hop count
-- [B] `evaluate.py` saves results to CSV; print aggregate table grouped by `(method, hops)`
-- **Milestone:** headline comparison table generated; CSV saved for the results dashboard
-
----
-
-### Phase 5 — Compare & Benchmark Modes + Polish
-
-- [A] Compare mode: same query → all 4 methods side-by-side
-- [B] Benchmark mode: random MuSiQue question, gold reveal toggle, live metrics per method
-- [A] Reasoning-trace panel for decomposition; rerank-score panel for re-ranking
-- [A] Retrieved-chunks panel with scores + source titles + ✓/✗ gold annotations (benchmark mode only)
-
----
-
-### Phase 6 — Report & Demo
-
-- Write report: task formulation, methods + citations, results table, hop-count analysis, discussion of when each method helps
-- Slides with the headline screenshot (compare mode: failure → success progression)
-- Optional: deploy to HuggingFace Spaces with hosted LLM
+The retriever is the only swappable component. Generator, embedder, prompt, and corpus are fixed across all methods — that's what makes the comparison fair.
 
 ---
 
@@ -638,10 +355,10 @@ Both methods implement the same `Retriever` protocol and plug into the existing 
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.11+
 - [uv](https://github.com/astral-sh/uv) for package management
-- [Ollama](https://ollama.com/) for local LLM inference
-- ~10GB disk space (corpus + ChromaDB + LLM weights)
+- [Ollama](https://ollama.com/) for local LLM inference (or any OpenAI-compatible API endpoint)
+- ~15GB disk space (corpus + ChromaDB + LLM weights)
 
 ### Initial setup
 
@@ -652,17 +369,21 @@ git clone <repo-url> nlp-rag-bench && cd nlp-rag-bench
 # Install dependencies
 uv sync
 
-# Install with dev extras (notebooks, formatting)
+# Install with dev extras (notebooks, formatting, type-checking)
 uv sync --extra dev
 
-# Copy and fill in API keys (only needed for LLM-as-judge)
+# Copy and configure environment variables
 cp .env.example .env
 
-# Pull the generator LLM
-ollama pull llama3.1:8b-instruct-q4_K_M
+# Pull the generator LLM (default)
+ollama pull qwen2.5:7b-instruct
 
-# Download MuSiQue dev split (see github.com/StonyBrookNLP/musique)
-# Place at: data/musique/musique_ans_v1.0_dev.jsonl
+# Download the MuSiQue dataset
+# Get the Google Drive file ID from https://github.com/StonyBrookNLP/musique
+# then run:
+uv run python scripts/download_data.py --gdrive-id <FILE_ID>
+# Or, if you downloaded the zip manually:
+uv run python scripts/download_data.py --zip path/to/musique.zip
 ```
 
 ### Running the pipeline
@@ -674,31 +395,38 @@ uv run python scripts/prepare_data.py
 # 2. Build the vector index (under chroma_db/<embedder_slug>/)
 uv run python scripts/build_index.py
 
-# 3. Sanity check: confirm the LLM doesn't memorize MuSiQue answers
+# 3. Sanity check: confirm LLM doesn't memorize MuSiQue answers
 uv run python scripts/memorization_check.py
 
-# 4. Run full evaluation across all methods
+# 4. Run full evaluation across all 5 methods (checkpoint/resume supported)
 uv run python scripts/evaluate.py
 
-# 5. Launch the application
+# 5. Aggregate results and print tables (add --latex for LaTeX source)
+uv run python scripts/analyze_results.py
+uv run python scripts/analyze_results.py --latex --output report/tables.tex
+
+# 6. Launch the interactive application
 uv run streamlit run src/ragbench/app/streamlit_app.py
+```
+
+### Configuring the LLM backend
+
+All settings can be overridden with `RAGBENCH_*` environment variables or in `.env`:
+
+```bash
+# Use a different local model
+RAGBENCH_GENERATOR_MODEL=llama3.1:8b-instruct-q4_K_M
+
+# Use an OpenAI-compatible remote endpoint (e.g., Together AI)
+RAGBENCH_API_SRC=openai
+RAGBENCH_API_URL=https://api.together.xyz
+RAGBENCH_API_AUTH_BEARER=<your-token>
+RAGBENCH_GENERATOR_MODEL=google/gemma-4-31B
 ```
 
 ### Switching the embedding model
 
-Edit `embedding_model` in `src/ragbench/config.py` (or set the `RAGBENCH_EMBEDDING_MODEL` env var), then rerun `build_index.py`. Each model gets its own directory under `chroma_db/`, so multiple indexes can coexist.
-
-### Switching the retrieval method at runtime
-
-The application's sidebar exposes a method dropdown — selecting a different value reuses the same index and generator and only swaps the retriever. No re-indexing, no model reload.
-
-```python
-from ragbench.retrievers import NaiveRetriever, ReRankRetriever, DecompositionRetriever
-from ragbench.pipeline import RAGPipeline
-
-pipeline = RAGPipeline(generator=gen, retriever=ReRankRetriever(...))
-result = pipeline.run("Who is the spouse of the performer of Imagine?")
-```
+Edit `embedding_model` in `src/ragbench/config.py` (or set `RAGBENCH_EMBEDDING_MODEL`), then rerun `build_index.py`. Each model gets its own directory under `chroma_db/`, so multiple indexes can coexist.
 
 ---
 
@@ -709,4 +437,5 @@ result = pipeline.run("Who is the spouse of the performer of Imagine?")
 - **Re-ranking:** Nogueira & Cho (2019). *"Passage Re-ranking with BERT."* [arXiv:1901.04085](https://arxiv.org/abs/1901.04085)
 - **Decomposition (IRCoT):** Trivedi et al. (2023). *"Interleaving Retrieval with Chain-of-Thought Reasoning for Knowledge-Intensive Multi-Step Questions."* ACL 2023. [arXiv:2212.10509](https://arxiv.org/abs/2212.10509)
 - **Bi-encoder framework:** Reimers & Gurevych (2019). *"Sentence-BERT."* EMNLP 2019. [arXiv:1908.10084](https://arxiv.org/abs/1908.10084)
-- **Embeddings:** BGE (Beijing Academy of AI); MS MARCO MiniLM cross-encoder
+- **Reciprocal Rank Fusion:** Cormack, Clarke, Buettcher (2009). *"Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods."* SIGIR 2009.
+- **Embeddings / Re-ranker:** BGE model family (Beijing Academy of AI). [BAAI/bge-large-en-v1.5](https://huggingface.co/BAAI/bge-large-en-v1.5), [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)

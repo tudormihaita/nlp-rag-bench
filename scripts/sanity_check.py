@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Author: Tudor Mihaita
 """
 Sanity check: run all available methods on N random questions and display
 per-question outputs and metrics. Writes nothing to disk — use before full eval.

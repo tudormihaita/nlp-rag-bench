@@ -1,0 +1,38 @@
+graph TD
+    subgraph setup ["① Data Preparation"]
+        JSONL[/"musique_ans_v1.0_dev.jsonl\n2 417 questions"/]
+        PREP["Data preparation\nload · stratified sample · pool + deduplicate"]
+        PROC[/"Processed sample\nsampled_questions.json\npooled_corpus.json · gold_index.json"/]
+        EMB["Embedder\nBAAI/bge-large-en-v1.5"]
+        BIDX["Index builder\nencode passages in batches"]
+        DB[("ChromaDB\n~10 k passages · cosine HNSW")]
+        JSONL --> PREP --> PROC
+        PROC --> BIDX
+        EMB --> BIDX --> DB
+    end
+
+    subgraph pipeline ["② RAGPipeline — per query"]
+        Q(["Question"])
+        RET["Retriever\nswappable - 5 methods"]
+        GEN["Generator\nOllama or OpenAI-compatible API"]
+        RES(["PipelineResult\nanswer · passages · RetrievalTrace"])
+        Q --> RET
+        DB -.->|"cosine lookup"| RET
+        RET -->|"top-k passages + trace"| GEN --> RES
+    end
+
+    subgraph app ["③ Streamlit App — interactive benchmarking"]
+        A1["Chat Mode\nstreaming answer · retrieval trace · reasoning trace"]
+        A2["Compare Mode\nall methods side-by-side"]
+        A3["Benchmark Mode\nrandom MuSiQue question · gold reveal\nlive EM/F1 · passage annotation"]
+        RES --> A1 & A2 & A3
+    end
+
+    subgraph eval ["④ Evaluation — offline batch"]
+        EV["Evaluator\n500 q × 5 methods · checkpoint/resume"]
+        MET["Performance metrics\nEM · F1\nHit@k · Rec@k · AllRec@k\nMRR · P@k · NDCG@k"]
+        CSV[/"Per-method benchmarking\n2 500 rows"/]
+        ANA["Results generation\nCSV export"]
+        PROC -->|"questions + gold index"| EV
+        EV --> MET --> CSV --> ANA
+    end

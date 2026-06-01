@@ -1,3 +1,4 @@
+# Author: Alexandru Profir
 import math
 from dataclasses import replace
 

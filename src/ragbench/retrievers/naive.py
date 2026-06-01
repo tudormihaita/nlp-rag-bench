@@ -1,3 +1,4 @@
+# Author: Alexandru Profir
 import chromadb
 
 from ragbench.indexing.embedder import Embedder

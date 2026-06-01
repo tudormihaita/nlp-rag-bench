@@ -1,3 +1,4 @@
+# Author: Alexandru Profir
 """
 Retrieval and generation metrics for RAG evaluation.
 

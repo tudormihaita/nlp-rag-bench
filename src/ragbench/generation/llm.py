@@ -1,3 +1,4 @@
+# Author: Tudor Mihaita
 import json
 from collections.abc import Iterator
 

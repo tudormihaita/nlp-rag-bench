@@ -1,3 +1,4 @@
+# Author: Alexandru Profir
 from pathlib import Path
 
 import chromadb

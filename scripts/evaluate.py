@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Author: Alexandru Profir
 """
 Run all 4 retrieval methods over the sampled MuSiQue questions and print
 the headline comparison table. Results are checkpointed per method so

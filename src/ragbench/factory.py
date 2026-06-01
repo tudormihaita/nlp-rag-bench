@@ -1,3 +1,4 @@
+# Author: Tudor Mihaita
 from enum import StrEnum
 
 from ragbench.config import Settings

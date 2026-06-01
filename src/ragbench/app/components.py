@@ -1,3 +1,4 @@
+# Author: Tudor Mihaita
 from collections.abc import Sequence
 
 import streamlit as st

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Author: Tudor Mihaita
 """
 Verify that the chosen LLM does not memorize MuSiQue answers.
 

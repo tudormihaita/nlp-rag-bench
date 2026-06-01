@@ -1,0 +1,136 @@
+@startuml RAGPipeline Class Diagram
+
+skinparam classAttributeIconSize 0
+skinparam classFontSize 12
+skinparam classFontName Arial
+skinparam arrowThickness 1.3
+skinparam linetype ortho
+skinparam nodesep 60
+skinparam ranksep 50
+
+skinparam class {
+    BackgroundColor White
+    BorderColor #444444
+    ArrowColor #444444
+    HeaderBackgroundColor #DDEEFF
+}
+
+skinparam interface {
+    BackgroundColor #FFFDE7
+    BorderColor #888800
+}
+
+skinparam stereotype {
+    CBackgroundColor #F3E5F5
+    CBorderColor #6A1B9A
+}
+
+' ── Data classes ──────────────────────────────────────────────
+
+class RetrievedPassage <<dataclass>> {
+    + doc_id : str
+    + text : str
+    + title : str
+    + score : float
+}
+
+class RetrievalTrace <<dataclass>> {
+    + sub_queries : list[str]
+    + intermediate_answers : list[str]
+    + enriched_queries : list[str]
+    + rerank_scores : list[float]
+    + notes : str
+}
+
+class PipelineResult <<dataclass>> {
+    + answer : str
+    + passages : list[RetrievedPassage]
+    + trace : RetrievalTrace
+}
+
+' ── Supporting components ─────────────────────────────────────
+
+class Embedder {
+    + model_name : str
+    + slug : str
+    + encode_query(text: str) : ndarray
+    + encode_passages(texts: list, batch_size: int) : ndarray
+}
+
+class Generator {
+    + model : str
+    + temperature : float
+    + generate(prompt: str) : str
+    + stream(prompt: str) : Iterator[str]
+    + health_check() : bool
+}
+
+' ── Retriever protocol ────────────────────────────────────────
+
+interface Retriever <<Protocol>> {
+    + retrieve(query: str, k: int) : tuple[list[RetrievedPassage], RetrievalTrace]
+}
+
+' ── Concrete retrievers ───────────────────────────────────────
+
+class NaiveRetriever {
+    - collection : chromadb.Collection
+    - embedder : Embedder
+    + retrieve(query: str, k: int, diversify: bool) : tuple
+}
+
+class ReRankRetriever {
+    - naive : NaiveRetriever
+    - reranker : CrossEncoder
+    - candidate_k : int
+    + retrieve(query: str, k: int) : tuple
+}
+
+class DecompositionRetriever {
+    - naive : NaiveRetriever
+    - generator : Generator
+    - iterative : bool
+    - k_per_subquery : int
+    - k_for_intermediate : int
+    + retrieve(query: str, k: int) : tuple
+    - _decompose(question: str) : list[str]
+    - _rrf_merge(results: list, k: int) : list[RetrievedPassage]
+    - _retrieve_static(sub_questions: list, k: int) : tuple
+    - _retrieve_iterative(sub_questions: list, k: int) : tuple
+    - _rewrite_subquestion(sq: str, answers: list) : str
+}
+
+' ── Pipeline ──────────────────────────────────────────────────
+
+class RAGPipeline {
+    - retriever : Retriever | None
+    - generator : Generator
+    - top_k : int
+    + run(question: str) : PipelineResult
+    + stream(question: str) : tuple[Iterator, list, RetrievalTrace]
+}
+
+' ── Retriever inheritance ─────────────────────────────────────
+
+Retriever <|.. NaiveRetriever         : implements
+Retriever <|.. ReRankRetriever        : implements
+Retriever <|.. DecompositionRetriever : implements
+
+' ── Composition ──────────────────────────────────────────────
+
+ReRankRetriever         *--> "1" NaiveRetriever  : wraps
+DecompositionRetriever  *--> "1" NaiveRetriever  : wraps
+DecompositionRetriever  ---> Generator           : decompose\nintermediate\nrewrite
+
+NaiveRetriever --> Embedder : uses
+
+' ── Pipeline relationships ────────────────────────────────────
+
+RAGPipeline o--> "0..1" Retriever : retriever
+RAGPipeline  *--> "1"   Generator : generator
+RAGPipeline  ..>  PipelineResult  : returns
+
+PipelineResult *-- "0..*" RetrievedPassage
+PipelineResult *-- "1"    RetrievalTrace
+
+@enduml

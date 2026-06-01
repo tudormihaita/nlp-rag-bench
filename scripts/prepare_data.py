@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Author: Alexandru Profir
 """Load MuSiQue dev split, stratified sample, pool corpus and save to data/processed/."""
 import argparse
 import json

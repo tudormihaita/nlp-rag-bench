@@ -1,3 +1,4 @@
+# Author: Tudor Mihaita
 from collections.abc import Mapping
 
 import streamlit as st
